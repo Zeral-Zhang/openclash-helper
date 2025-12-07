@@ -229,22 +229,22 @@ document.getElementById('testCf').onclick = async () => {
   const host = document.getElementById('hostCf').value;
   const username = document.getElementById('usernameCf').value;
   const password = document.getElementById('passwordCf').value;
-  
+
   if (!host || !password) {
     showStatus('statusCf', '请填写完整信息', 'error');
     return;
   }
-  
+
   try {
     showStatus('statusCf', '正在测试连接...', 'success');
     const api = new OpenClashAPI({ host, username, password });
     await api.login();
-    
+
     // 自动从UCI获取Secret和端口
     showStatus('statusCf', '正在读取 OpenClash 配置...', 'success');
     let clashSecret = document.getElementById('clashSecretCf').value;
     let clashPort = document.getElementById('clashPortCf').value || '9090';
-    
+
     if (!clashSecret) {
       try {
         const secretResult = await api.exec(`uci get openclash.config.dashboard_password 2>/dev/null || echo ""`);
@@ -254,7 +254,7 @@ document.getElementById('testCf').onclick = async () => {
         }
       } catch (e) {}
     }
-    
+
     try {
       const portResult = await api.exec(`uci get openclash.config.cn_port 2>/dev/null || echo "9090"`);
       if (portResult && portResult.trim()) {
@@ -262,10 +262,64 @@ document.getElementById('testCf').onclick = async () => {
         document.getElementById('clashPortCf').value = clashPort;
       }
     } catch (e) {}
-    
+
     showStatus('statusCf', clashSecret ? '✅ 连接成功，已自动获取 Secret' : '✅ 连接成功', 'success');
   } catch (e) {
     showStatus('statusCf', '连接失败: ' + e.message, 'error');
+  }
+};
+
+// 测试 Clash API 连接（云端模式）
+document.getElementById('testClashApiCf').onclick = async () => {
+  const host = document.getElementById('hostCf').value;
+  let clashPort = document.getElementById('clashPortCf').value || '9090';
+  let clashSecret = document.getElementById('clashSecretCf').value;
+
+  if (!host) {
+    showStatus('statusClashApiCf', '请先填写路由器地址', 'error');
+    return;
+  }
+
+  showStatus('statusClashApiCf', '正在测试 Clash API...', 'success');
+
+  try {
+    const [hostPart] = host.split(':');
+    const headers = {};
+    if (clashSecret) {
+      headers['Authorization'] = `Bearer ${clashSecret}`;
+    }
+
+    console.log('[测试 Clash API] 请求信息:', {
+      url: `http://${hostPart}:${clashPort}/version`,
+      hasSecret: !!clashSecret
+    });
+
+    const response = await fetch(`http://${hostPart}:${clashPort}/version`, {
+      headers,
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (response.status === 401) {
+      showStatus('statusClashApiCf', '❌ 认证失败，Secret（密钥）错误', 'error');
+      return;
+    }
+
+    if (!response.ok) {
+      showStatus('statusClashApiCf', `❌ 连接失败 (HTTP ${response.status})`, 'error');
+      return;
+    }
+
+    const data = await response.json();
+    showStatus('statusClashApiCf', `✅ 连接成功！Clash 版本: ${data.version || data.premium ? 'Premium' : 'Unknown'}`, 'success');
+  } catch (e) {
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+      showStatus('statusClashApiCf', '❌ 连接超时，请检查路由器地址和端口', 'error');
+    } else if (e.message.includes('fetch') || e.message.includes('NetworkError')) {
+      showStatus('statusClashApiCf', '❌ 网络错误，无法连接到 Clash API', 'error');
+    } else {
+      showStatus('statusClashApiCf', '❌ 测试失败: ' + e.message, 'error');
+    }
+    console.error('[测试 Clash API] 失败:', e);
   }
 };
 
@@ -499,22 +553,22 @@ document.getElementById('testRemote').onclick = async () => {
   const host = document.getElementById('host').value;
   const username = document.getElementById('username').value;
   const password = document.getElementById('password').value;
-  
+
   if (!host || !password) {
     showStatus('statusRemote', '请填写完整信息', 'error');
     return;
   }
-  
+
   try {
     showStatus('statusRemote', '正在测试连接...', 'success');
     const api = new OpenClashAPI({ host, username, password });
     await api.login();
-    
+
     // 自动从UCI获取Secret和端口
     showStatus('statusRemote', '正在读取 OpenClash 配置...', 'success');
     let clashSecret = document.getElementById('clashSecret').value;
     let clashPort = document.getElementById('clashPort').value || '9090';
-    
+
     if (!clashSecret) {
       try {
         const secretResult = await api.exec(`uci get openclash.config.dashboard_password 2>/dev/null || echo ""`);
@@ -524,7 +578,7 @@ document.getElementById('testRemote').onclick = async () => {
         }
       } catch (e) {}
     }
-    
+
     try {
       const portResult = await api.exec(`uci get openclash.config.cn_port 2>/dev/null || echo "9090"`);
       if (portResult && portResult.trim()) {
@@ -532,10 +586,64 @@ document.getElementById('testRemote').onclick = async () => {
         document.getElementById('clashPort').value = clashPort;
       }
     } catch (e) {}
-    
+
     showStatus('statusRemote', clashSecret ? '✅ 连接成功，已自动获取 Secret' : '✅ 连接成功', 'success');
   } catch (e) {
     showStatus('statusRemote', '连接失败: ' + e.message, 'error');
+  }
+};
+
+// 测试 Clash API 连接（远程模式）
+document.getElementById('testClashApi').onclick = async () => {
+  const host = document.getElementById('host').value;
+  let clashPort = document.getElementById('clashPort').value || '9090';
+  let clashSecret = document.getElementById('clashSecret').value;
+
+  if (!host) {
+    showStatus('statusClashApi', '请先填写路由器地址', 'error');
+    return;
+  }
+
+  showStatus('statusClashApi', '正在测试 Clash API...', 'success');
+
+  try {
+    const [hostPart] = host.split(':');
+    const headers = {};
+    if (clashSecret) {
+      headers['Authorization'] = `Bearer ${clashSecret}`;
+    }
+
+    console.log('[测试 Clash API] 请求信息:', {
+      url: `http://${hostPart}:${clashPort}/version`,
+      hasSecret: !!clashSecret
+    });
+
+    const response = await fetch(`http://${hostPart}:${clashPort}/version`, {
+      headers,
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (response.status === 401) {
+      showStatus('statusClashApi', '❌ 认证失败，Secret（密钥）错误', 'error');
+      return;
+    }
+
+    if (!response.ok) {
+      showStatus('statusClashApi', `❌ 连接失败 (HTTP ${response.status})`, 'error');
+      return;
+    }
+
+    const data = await response.json();
+    showStatus('statusClashApi', `✅ 连接成功！Clash 版本: ${data.version || data.premium ? 'Premium' : 'Unknown'}`, 'success');
+  } catch (e) {
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+      showStatus('statusClashApi', '❌ 连接超时，请检查路由器地址和端口', 'error');
+    } else if (e.message.includes('fetch') || e.message.includes('NetworkError')) {
+      showStatus('statusClashApi', '❌ 网络错误，无法连接到 Clash API', 'error');
+    } else {
+      showStatus('statusClashApi', '❌ 测试失败: ' + e.message, 'error');
+    }
+    console.error('[测试 Clash API] 失败:', e);
   }
 };
 

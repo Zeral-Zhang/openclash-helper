@@ -143,17 +143,20 @@ function updateDomainPreview() {
 // 检测访问状态
 async function checkAccessibility(tab) {
   const statusEl = document.getElementById('accessStatus');
-  
+
+  // 检查错误页面
   if (tab.url.startsWith('chrome-error://')) {
     showProxyHint('网站无法访问');
     return;
   }
-  
+
+  // 检查页面标题中的错误信息
   if (tab.title && (tab.title.includes('无法访问') || tab.title.includes('ERR_'))) {
     showProxyHint('页面加载失败');
     return;
   }
-  
+
+  // IP 地址提示
   if (isIP) {
     statusEl.innerHTML = `
       <div style="background: #e0e7ff; color: #3730a3; font-size: 12px; margin-top: 8px; padding: 8px 10px; border-radius: 4px; border-left: 3px solid #6366f1; font-weight: 500;">
@@ -162,19 +165,20 @@ async function checkAccessibility(tab) {
     `;
     return;
   }
-  
+
   statusEl.innerHTML = '<div style="background: #f3f4f6; color: #6b7280; font-size: 12px; margin-top: 8px; padding: 8px 10px; border-radius: 4px; border-left: 3px solid #9ca3af; font-weight: 500;">🔍 检测连接状态...</div>';
-  
+
   try {
+    // 方案1: 先尝试使用 fetch 快速检测 (更快但可能遇到 CORS)
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
-    
+
     await fetch(`https://${currentDomain}`, {
       method: 'HEAD',
       mode: 'no-cors',
       signal: controller.signal
     });
-    
+
     clearTimeout(timeout);
     statusEl.innerHTML = `
       <div style="background: #d1fae5; color: #065f46; font-size: 12px; margin-top: 8px; padding: 8px 10px; border-radius: 4px; border-left: 3px solid #10b981; font-weight: 500;">
@@ -182,7 +186,52 @@ async function checkAccessibility(tab) {
       </div>
     `;
   } catch (e) {
-    showProxyHint(e.name === 'AbortError' ? '连接超时' : '网络错误');
+    // 如果 fetch 失败,输出错误到控制台方便排查
+    console.log('[可达性检测] fetch 失败:', {
+      domain: currentDomain,
+      error: e.message,
+      errorType: e.name,
+      errorStack: e.stack
+    });
+
+    // 使用备用方案: Chrome API 检测页面状态
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          return {
+            loaded: document.readyState === 'complete' || document.readyState === 'interactive',
+            hasContent: document.body && document.body.children.length > 0
+          };
+        }
+      }).catch(() => null);
+
+      if (results && results[0]?.result?.loaded && results[0]?.result?.hasContent) {
+        // 页面已正常加载,但 fetch 失败,可能是 CORS 限制
+        console.log('[可达性检测] 备用方案检测成功,页面已正常加载');
+        statusEl.innerHTML = `
+          <div style="background: #d1fae5; color: #065f46; font-size: 12px; margin-top: 8px; padding: 8px 10px; border-radius: 4px; border-left: 3px solid #10b981; font-weight: 500;">
+            ✓ 网站可正常访问
+          </div>
+        `;
+      } else {
+        // 页面加载失败
+        console.log('[可达性检测] 备用方案检测失败,页面未正常加载');
+        showProxyHint(e.name === 'AbortError' ? '连接超时' : '网络错误');
+      }
+    } catch (scriptError) {
+      // 如果两种方法都失败,根据 tab 状态判断
+      console.log('[可达性检测] 备用方案执行失败:', scriptError.message);
+      if (tab.status === 'complete') {
+        statusEl.innerHTML = `
+          <div style="background: #fef3c7; color: #92400e; font-size: 12px; margin-top: 8px; padding: 8px 10px; border-radius: 4px; border-left: 3px solid #f59e0b; font-weight: 500;">
+            ⚠️ 无法检测访问状态
+          </div>
+        `;
+      } else {
+        showProxyHint('页面加载失败');
+      }
+    }
   }
 }
 

@@ -3,7 +3,7 @@
   "name": "OpenClash 规则助手",
   "version": "2.0",
   "description": "快速添加网站到 OpenClash 规则,支持远程同步和本地存储",
-  "permissions": ["activeTab", "contextMenus", "storage"],
+  "permissions": ["activeTab", "contextMenus", "storage", "scripting"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "action": {
     "default_popup": "popup.html",
