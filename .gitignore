@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+
+# 打包文件
+*.zip
+
+# 编辑器
+.vscode/
+.idea/
+
+# 临时文件
+*.log
+*.tmp
+
+# 构建产物
+openclash-helper.zip
