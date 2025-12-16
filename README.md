@@ -2,6 +2,28 @@
 
 快速添加网站到 OpenClash 规则的浏览器插件，支持远程同步和云端同步两种模式。
 
+## 界面展示
+
+<table>
+  <tr>
+    <td width="33%" align="center">
+      <img src="screenshots/dialog.png" width="300"/>
+      <br/>
+      <strong>弹窗界面</strong>
+    </td>
+    <td width="33%" align="center">
+      <img src="screenshots/config.png" width="300"/>
+      <br/>
+      <strong>配置页面</strong>
+    </td>
+    <td width="33%" align="center">
+      <img src="screenshots/remote-rule-manager.png" width="300"/>
+      <br/>
+      <strong>规则管理</strong>
+    </td>
+  </tr>
+</table>
+
 ## 功能特性
 
 - 🚀 **远程同步模式**: 直接通过 LuCI API 添加规则到路由器本地文件

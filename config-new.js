@@ -104,7 +104,7 @@ document.getElementById('toggleSecret')?.addEventListener('click', togglePasswor
 document.getElementById('toggleSecretCf')?.addEventListener('click', togglePasswordVisibility);
 
 // 加载配置
-chrome.storage.local.get(['config', 'cloudflareConfig', 'syncMode'], (result) => {
+chrome.storage.local.get(['config', 'cloudflareConfig', 'syncMode', 'localClientConfig'], (result) => {
   const syncMode = result.syncMode || 'cloudflare';
   document.getElementById('syncMode').value = syncMode;
   document.getElementById('cloudflareConfig').style.display = syncMode === 'cloudflare' ? 'block' : 'none';
@@ -123,16 +123,30 @@ chrome.storage.local.get(['config', 'cloudflareConfig', 'syncMode'], (result) =>
   const cloudflareConfig = result.cloudflareConfig || {};
   document.getElementById('workerUrl').value = cloudflareConfig.workerUrl || '';
   document.getElementById('apiSecret').value = cloudflareConfig.apiSecret || '';
+  
+  // 分离的路由器和本地客户端配置
   document.getElementById('hostCf').value = config.host || '';
   document.getElementById('usernameCf').value = config.username || 'root';
   document.getElementById('passwordCf').value = config.password || '';
-  document.getElementById('clashPortCf').value = config.clashPort || '9090';
-  document.getElementById('clashSecretCf').value = config.clashSecret || '';
-  document.getElementById('clashUICf').value = config.clashUI || 'zashboard';
-  
+
+  const localClientConfig = result.localClientConfig || {};
+  document.getElementById('clashHostCf').value = localClientConfig.host || '127.0.0.1';
+  document.getElementById('clashPortCf').value = localClientConfig.port || '9090';
+  document.getElementById('clashSecretCf').value = localClientConfig.secret || '';
+  document.getElementById('clashUICf').value = localClientConfig.ui || 'zashboard';
+
+  // 如果有保存的代理组，需要先填充选项才能设置值
+  if (localClientConfig.proxyGroup) {
+    const select = document.getElementById('clashProxyGroupCf');
+    select.innerHTML = `<option value="${localClientConfig.proxyGroup}">${localClientConfig.proxyGroup}</option>`;
+    select.value = localClientConfig.proxyGroup;
+    select.disabled = false;
+  }
+
   // 如果已配置 Cloudflare，显示 Clash Verge 配置
   if (cloudflareConfig.workerUrl) {
-    showClashVergeMerge(cloudflareConfig.workerUrl, cloudflareConfig.proxyGroup || 'Proxy');
+    const proxyGroup = localClientConfig.proxyGroup || cloudflareConfig.proxyGroup || 'Proxy';
+    showClashVergeMerge(cloudflareConfig.workerUrl, proxyGroup);
   }
 });
 
@@ -221,7 +235,16 @@ function main(config) {
 document.getElementById('copyClashVergeMerge').onclick = async () => {
   const text = document.getElementById('clashVergeMerge').value;
   await navigator.clipboard.writeText(text);
-  showStatus('statusCloudflare', '✅ 已复制到剪贴板', 'success');
+  const btn = document.getElementById('copyClashVergeMerge');
+  const originalText = btn.textContent;
+  btn.textContent = '✅ 已复制';
+  btn.style.background = '#10b981';
+  btn.style.color = 'white';
+  setTimeout(() => {
+    btn.textContent = originalText;
+    btn.style.background = '';
+    btn.style.color = '';
+  }, 2000);
 };
 
 // 测试 Cloudflare 路由器连接（同时自动获取Secret）
@@ -269,32 +292,77 @@ document.getElementById('testCf').onclick = async () => {
   }
 };
 
+// 智能解析 Clash API 地址
+function parseClashAddress(address) {
+  if (!address) return null;
+
+  address = address.trim();
+
+  // 移除协议前缀 (http:// 或 https://)
+  address = address.replace(/^https?:\/\//, '');
+
+  // 移除尾部斜杠
+  address = address.replace(/\/$/, '');
+
+  // 如果包含端口，分离出来
+  const parts = address.split(':');
+  if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+    return {
+      host: parts[0],
+      port: parts[1]
+    };
+  }
+
+  return {
+    host: address,
+    port: null
+  };
+}
+
 // 测试 Clash API 连接（云端模式）
 document.getElementById('testClashApiCf').onclick = async () => {
-  const host = document.getElementById('hostCf').value;
+  let clashHost = document.getElementById('clashHostCf').value.trim();
   let clashPort = document.getElementById('clashPortCf').value || '9090';
   let clashSecret = document.getElementById('clashSecretCf').value;
 
-  if (!host) {
-    showStatus('statusClashApiCf', '请先填写路由器地址', 'error');
+  // 如果没有填写 Clash 地址，尝试使用路由器地址
+  if (!clashHost) {
+    const routerHost = document.getElementById('hostCf').value;
+    if (routerHost) {
+      clashHost = routerHost;
+      showStatus('statusClashApiCf', 'ℹ️ 使用路由器地址进行测试...', 'success');
+    } else {
+      showStatus('statusClashApiCf', '请填写 Clash API 地址（如 127.0.0.1 或路由器 IP）', 'error');
+      return;
+    }
+  }
+
+  // 智能解析地址
+  const parsed = parseClashAddress(clashHost);
+  if (!parsed) {
+    showStatus('statusClashApiCf', '地址格式错误', 'error');
     return;
   }
+
+  const host = parsed.host;
+  const port = parsed.port || clashPort;
 
   showStatus('statusClashApiCf', '正在测试 Clash API...', 'success');
 
   try {
-    const [hostPart] = host.split(':');
     const headers = {};
     if (clashSecret) {
       headers['Authorization'] = `Bearer ${clashSecret}`;
     }
 
+    const isLocal = host === '127.0.0.1' || host === 'localhost';
     console.log('[测试 Clash API] 请求信息:', {
-      url: `http://${hostPart}:${clashPort}/version`,
-      hasSecret: !!clashSecret
+      url: `http://${host}:${port}/version`,
+      hasSecret: !!clashSecret,
+      client: isLocal ? 'Local Clash' : 'Remote Clash'
     });
 
-    const response = await fetch(`http://${hostPart}:${clashPort}/version`, {
+    const response = await fetch(`http://${host}:${port}/version`, {
       headers,
       signal: AbortSignal.timeout(5000)
     });
@@ -310,18 +378,107 @@ document.getElementById('testClashApiCf').onclick = async () => {
     }
 
     const data = await response.json();
-    showStatus('statusClashApiCf', `✅ 连接成功！Clash 版本: ${data.version || data.premium ? 'Premium' : 'Unknown'}`, 'success');
+    const versionInfo = data.version || (data.premium ? 'Premium' : 'Unknown');
+    const clientType = isLocal ? '本地 Clash' : '远程 Clash';
+    showStatus('statusClashApiCf', `✅ 连接成功！${clientType} 版本: ${versionInfo}`, 'success');
   } catch (e) {
     if (e.name === 'TimeoutError' || e.name === 'AbortError') {
-      showStatus('statusClashApiCf', '❌ 连接超时，请检查路由器地址和端口', 'error');
+      showStatus('statusClashApiCf', '❌ 连接超时，请检查地址和端口，或确认 Clash 正在运行', 'error');
     } else if (e.message.includes('fetch') || e.message.includes('NetworkError')) {
-      showStatus('statusClashApiCf', '❌ 网络错误，无法连接到 Clash API', 'error');
+      showStatus('statusClashApiCf', '❌ 网络错误，无法连接到 Clash API（OpenClash/Clash Verge 等）', 'error');
     } else {
       showStatus('statusClashApiCf', '❌ 测试失败: ' + e.message, 'error');
     }
     console.error('[测试 Clash API] 失败:', e);
   }
 };
+
+// 获取 Clash 代理组（云端模式 - 用于 Clash Verge 配置）
+document.getElementById('fetchClashGroupsCf')?.addEventListener('click', async () => {
+  let clashHost = document.getElementById('clashHostCf').value.trim();
+  let clashPort = document.getElementById('clashPortCf').value || '9090';
+  let clashSecret = document.getElementById('clashSecretCf').value;
+
+  if (!clashHost) {
+    showStatus('statusClashApiCf', '请先填写 Clash API 地址', 'error');
+    return;
+  }
+
+  // 智能解析地址
+  const parsed = parseClashAddress(clashHost);
+  if (!parsed) {
+    showStatus('statusClashApiCf', '地址格式错误', 'error');
+    return;
+  }
+
+  const host = parsed.host;
+  const port = parsed.port || clashPort;
+
+  showStatus('statusClashApiCf', '正在获取代理组...', 'success');
+
+  try {
+    const headers = {};
+    if (clashSecret) {
+      headers['Authorization'] = `Bearer ${clashSecret}`;
+    }
+
+    const response = await fetch(`http://${host}:${port}/proxies`, {
+      headers,
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (response.status === 401) {
+      showStatus('statusClashApiCf', '❌ Clash API 认证失败，请检查外部控制密钥（Secret）', 'error');
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error('无法连接 Clash API');
+    }
+
+    const data = await response.json();
+    const groups = Object.entries(data.proxies)
+      .filter(([name, p]) => !['DIRECT', 'REJECT', 'GLOBAL'].includes(name) &&
+        (p.type === 'Selector' || p.type === 'URLTest' || p.type === 'Fallback' || p.type === 'Smart'))
+      .map(([name]) => name);
+
+    if (groups.length === 0) {
+      throw new Error('未找到代理组');
+    }
+
+    const select = document.getElementById('clashProxyGroupCf');
+    select.innerHTML = groups.map(g => `<option value="${g}">${g}</option>`).join('');
+    select.disabled = false;
+
+    // 恢复之前保存的选择
+    const { localClientConfig } = await chrome.storage.local.get(['localClientConfig']);
+    if (localClientConfig?.proxyGroup && groups.includes(localClientConfig.proxyGroup)) {
+      select.value = localClientConfig.proxyGroup;
+    }
+
+    showStatus('statusClashApiCf', `✅ 找到 ${groups.length} 个代理组`, 'success');
+
+    // 更新 Clash Verge 配置
+    const workerUrl = document.getElementById('workerUrl').value;
+    if (workerUrl) {
+      showClashVergeMerge(workerUrl, select.value);
+    }
+  } catch (e) {
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+      showStatus('statusClashApiCf', '❌ 连接超时，请检查地址和端口', 'error');
+    } else {
+      showStatus('statusClashApiCf', '获取失败: ' + e.message, 'error');
+    }
+  }
+});
+
+// 代理组选择变化时更新 Clash Verge 配置
+document.getElementById('clashProxyGroupCf')?.addEventListener('change', function() {
+  const workerUrl = document.getElementById('workerUrl').value;
+  if (workerUrl) {
+    showClashVergeMerge(workerUrl, this.value);
+  }
+});
 
 // 获取代理组列表（云端同步模式）
 document.getElementById('fetchGroupsCf').onclick = async () => {
@@ -357,10 +514,10 @@ document.getElementById('fetchGroupsCf').onclick = async () => {
     const response = await fetch(`http://${hostPart}:${clashPort}/proxies`, { headers });
     
     if (response.status === 401) {
-      showStatus('statusCf', '❌ Clash API 认证失败，请检查 OpenClash 外部控制密钥', 'error');
+      showStatus('statusCf', '❌ Clash API 认证失败，请检查外部控制密钥（Secret）', 'error');
       return;
     }
-    
+
     if (!response.ok) throw new Error('无法连接 Clash API');
     
     const data = await response.json();
@@ -595,30 +752,48 @@ document.getElementById('testRemote').onclick = async () => {
 
 // 测试 Clash API 连接（远程模式）
 document.getElementById('testClashApi').onclick = async () => {
-  const host = document.getElementById('host').value;
+  let clashHost = document.getElementById('clashHost').value.trim();
   let clashPort = document.getElementById('clashPort').value || '9090';
   let clashSecret = document.getElementById('clashSecret').value;
 
-  if (!host) {
-    showStatus('statusClashApi', '请先填写路由器地址', 'error');
+  // 如果没有填写 Clash 地址，尝试使用路由器地址
+  if (!clashHost) {
+    const routerHost = document.getElementById('host').value;
+    if (routerHost) {
+      clashHost = routerHost;
+      showStatus('statusClashApi', 'ℹ️ 使用路由器地址进行测试...', 'success');
+    } else {
+      showStatus('statusClashApi', '请填写 Clash API 地址（如 127.0.0.1 或路由器 IP）', 'error');
+      return;
+    }
+  }
+
+  // 智能解析地址
+  const parsed = parseClashAddress(clashHost);
+  if (!parsed) {
+    showStatus('statusClashApi', '地址格式错误', 'error');
     return;
   }
+
+  const host = parsed.host;
+  const port = parsed.port || clashPort;
 
   showStatus('statusClashApi', '正在测试 Clash API...', 'success');
 
   try {
-    const [hostPart] = host.split(':');
     const headers = {};
     if (clashSecret) {
       headers['Authorization'] = `Bearer ${clashSecret}`;
     }
 
+    const isLocal = host === '127.0.0.1' || host === 'localhost';
     console.log('[测试 Clash API] 请求信息:', {
-      url: `http://${hostPart}:${clashPort}/version`,
-      hasSecret: !!clashSecret
+      url: `http://${host}:${port}/version`,
+      hasSecret: !!clashSecret,
+      client: isLocal ? 'Local Clash' : 'Remote Clash'
     });
 
-    const response = await fetch(`http://${hostPart}:${clashPort}/version`, {
+    const response = await fetch(`http://${host}:${port}/version`, {
       headers,
       signal: AbortSignal.timeout(5000)
     });
@@ -634,12 +809,14 @@ document.getElementById('testClashApi').onclick = async () => {
     }
 
     const data = await response.json();
-    showStatus('statusClashApi', `✅ 连接成功！Clash 版本: ${data.version || data.premium ? 'Premium' : 'Unknown'}`, 'success');
+    const versionInfo = data.version || (data.premium ? 'Premium' : 'Unknown');
+    const clientType = isLocal ? '本地 Clash' : '远程 Clash';
+    showStatus('statusClashApi', `✅ 连接成功！${clientType} 版本: ${versionInfo}`, 'success');
   } catch (e) {
     if (e.name === 'TimeoutError' || e.name === 'AbortError') {
-      showStatus('statusClashApi', '❌ 连接超时，请检查路由器地址和端口', 'error');
+      showStatus('statusClashApi', '❌ 连接超时，请检查地址和端口，或确认 Clash 正在运行', 'error');
     } else if (e.message.includes('fetch') || e.message.includes('NetworkError')) {
-      showStatus('statusClashApi', '❌ 网络错误，无法连接到 Clash API', 'error');
+      showStatus('statusClashApi', '❌ 网络错误，无法连接到 Clash API（OpenClash/Clash Verge 等）', 'error');
     } else {
       showStatus('statusClashApi', '❌ 测试失败: ' + e.message, 'error');
     }
@@ -686,7 +863,7 @@ document.getElementById('fetchGroups').onclick = async () => {
       return;
     }
     
-    if (!response.ok) throw new Error('无法连接 Clash API，请确认 OpenClash 已启动');
+    if (!response.ok) throw new Error('无法连接 Clash API，请确认 Clash 已启动');
     
     const data = await response.json();
     const groups = Object.entries(data.proxies)
@@ -710,7 +887,7 @@ document.getElementById('fetchGroups').onclick = async () => {
     showStatus('statusAutoConfig', `✅ 找到 ${groups.length} 个代理组`, 'success');
   } catch (e) {
     if (e.message.includes('fetch') || e.message.includes('NetworkError')) {
-      showStatus('statusAutoConfig', '❌ 无法连接 Clash API，请确认 OpenClash 已启动且端口正确', 'error');
+      showStatus('statusAutoConfig', '❌ 无法连接 Clash API，请确认 Clash 已启动且端口正确', 'error');
     } else {
       showStatus('statusAutoConfig', '获取失败: ' + e.message, 'error');
     }
@@ -816,35 +993,36 @@ document.getElementById('autoConfigRemote').onclick = async () => {
 document.getElementById('save').onclick = async () => {
   const syncMode = document.getElementById('syncMode').value;
   
-  if (syncMode === 'cloudflare') {
-    const cloudflareConfig = {
-      workerUrl: document.getElementById('workerUrl').value,
-      apiSecret: document.getElementById('apiSecret').value,
-      proxyGroup: document.getElementById('cfProxyGroup').value || ''
-    };
-    const config = {
-      host: document.getElementById('hostCf').value,
-      username: document.getElementById('usernameCf').value,
-      password: document.getElementById('passwordCf').value,
-      clashPort: document.getElementById('clashPortCf').value || '9090',
-      clashSecret: document.getElementById('clashSecretCf').value,
-      clashUI: document.getElementById('clashUICf').value
-    };
-    await chrome.storage.local.set({ cloudflareConfig, config, syncMode });
-  } else {
-    const config = {
-      host: document.getElementById('host').value,
-      username: document.getElementById('username').value,
-      password: document.getElementById('password').value,
-      proxyFile: document.getElementById('proxyFile').value,
-      directFile: document.getElementById('directFile').value,
-      clashPort: document.getElementById('clashPort').value || '9090',
-      clashSecret: document.getElementById('clashSecret').value,
-      clashUI: document.getElementById('clashUI').value,
-      proxyGroup: document.getElementById('proxyGroup').value
-    };
-    await chrome.storage.local.set({ config, syncMode });
-  }
+  // 路由器/OpenClash 的配置
+  const config = {
+    host: document.getElementById(syncMode === 'remote' ? 'host' : 'hostCf').value,
+    username: document.getElementById(syncMode === 'remote' ? 'username' : 'usernameCf').value,
+    password: document.getElementById(syncMode === 'remote' ? 'password' : 'passwordCf').value,
+    proxyFile: document.getElementById('proxyFile').value,
+    directFile: document.getElementById('directFile').value,
+    clashPort: document.getElementById('clashPort').value || '9090',
+    clashSecret: document.getElementById('clashSecret').value,
+    clashUI: document.getElementById('clashUI').value,
+    proxyGroup: document.getElementById('proxyGroup').value
+  };
+
+  // Cloudflare Worker 配置
+  const cloudflareConfig = {
+    workerUrl: document.getElementById('workerUrl').value,
+    apiSecret: document.getElementById('apiSecret').value,
+    proxyGroup: document.getElementById('cfProxyGroup').value || ''
+  };
+
+  // 本地客户端（如 Clash Verge）的配置
+  const localClientConfig = {
+    host: document.getElementById('clashHostCf').value,
+    port: document.getElementById('clashPortCf').value || '9090',
+    secret: document.getElementById('clashSecretCf').value,
+    ui: document.getElementById('clashUICf').value,
+    proxyGroup: document.getElementById('clashProxyGroupCf').value || ''
+  };
+
+  await chrome.storage.local.set({ config, cloudflareConfig, localClientConfig, syncMode });
   
   showStatus('statusSave', '✅ 配置已保存', 'success');
 };

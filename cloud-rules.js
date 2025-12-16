@@ -221,25 +221,57 @@ async function deleteRule(type, matchType, domain) {
   }
 }
 
-// 刷新规则集
+// 刷新规则集（支持 OpenClash 和 Clash Verge）
 async function refreshRuleProvider(type) {
-  try {
-    const { config } = await chrome.storage.local.get(['config']);
-    if (!config || !config.host) return;
-    
-    const [hostPart] = config.host.split(':');
-    const port = config.clashPort || '9090';
-    const secret = config.clashSecret || '';
-    const headers = { 'Content-Type': 'application/json' };
-    if (secret) headers['Authorization'] = `Bearer ${secret}`;
-    
-    const providerName = type === 'PROXY' ? 'Rule-provider%20-%20Cloud_Proxy' : 'Rule-provider%20-%20Cloud_Direct';
-    await fetch(`http://${hostPart}:${port}/providers/rules/${providerName}`, {
-      method: 'PUT',
-      headers
-    });
-  } catch (e) {
-    console.log('刷新规则集失败:', e.message);
+  const { config, localClientConfig, syncMode } = await chrome.storage.local.get(['config', 'localClientConfig', 'syncMode']);
+
+  const providerName = type === 'PROXY' ? 'Rule-provider%20-%20Cloud_Proxy' : 'Rule-provider%20-%20Cloud_Direct';
+  let refreshedCount = 0;
+
+  // 刷新 OpenClash（远程模式或云端模式下的路由器）
+  if (config && config.host) {
+    try {
+      const [hostPart] = config.host.split(':');
+      const port = config.clashPort || '9090';
+      const secret = config.clashSecret || '';
+      const headers = { 'Content-Type': 'application/json' };
+      if (secret) headers['Authorization'] = `Bearer ${secret}`;
+
+      await fetch(`http://${hostPart}:${port}/providers/rules/${providerName}`, {
+        method: 'PUT',
+        headers,
+        signal: AbortSignal.timeout(5000)
+      });
+      refreshedCount++;
+      console.log(`✅ OpenClash 规则集已刷新: ${providerName}`);
+    } catch (e) {
+      console.log(`❌ OpenClash 刷新失败:`, e.message);
+    }
+  }
+
+  // 刷新 Clash Verge（云端模式下的本地客户端）
+  if (syncMode === 'cloudflare' && localClientConfig && localClientConfig.host) {
+    try {
+      const host = localClientConfig.host;
+      const port = localClientConfig.port || '9090';
+      const secret = localClientConfig.secret || '';
+      const headers = { 'Content-Type': 'application/json' };
+      if (secret) headers['Authorization'] = `Bearer ${secret}`;
+
+      await fetch(`http://${host}:${port}/providers/rules/${providerName}`, {
+        method: 'PUT',
+        headers,
+        signal: AbortSignal.timeout(5000)
+      });
+      refreshedCount++;
+      console.log(`✅ Clash Verge 规则集已刷新: ${providerName}`);
+    } catch (e) {
+      console.log(`❌ Clash Verge 刷新失败:`, e.message);
+    }
+  }
+
+  if (refreshedCount > 0) {
+    console.log(`✅ 共刷新了 ${refreshedCount} 个客户端的规则集`);
   }
 }
 

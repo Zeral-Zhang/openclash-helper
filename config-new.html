@@ -305,22 +305,30 @@
       <div id="statusAutoConfigCf" class="status"></div>
       
       <hr>
-      
-      <h3>OpenClash 外部控制</h3>
-      
+
+      <h3>Clash 外部控制</h3>
+
+      <div class="form-group">
+        <label>Clash API 地址</label>
+        <input type="text" id="clashHostCf" placeholder="127.0.0.1 或 192.168.1.1 或 http://example.com">
+        <div class="hint">Clash 外部控制地址（本地 Clash Verge 填 127.0.0.1，远程 OpenClash 填路由器 IP）</div>
+      </div>
+
       <div class="form-group">
         <label>外部控制端口</label>
         <input type="number" id="clashPortCf" placeholder="9090" value="9090">
+        <div class="hint">Clash 外部控制端口，默认 9090</div>
       </div>
-      
+
       <div class="form-group">
         <label>Secret（密钥）</label>
         <div class="password-wrapper">
-          <input type="password" id="clashSecretCf" placeholder="自动获取或手动填写">
+          <input type="password" id="clashSecretCf" placeholder="填写 Clash 外部控制密钥">
           <button type="button" class="password-toggle" id="toggleSecretCf">👁️</button>
         </div>
+        <div class="hint">Clash Verge: 设置 → 外部控制 → Secret；OpenClash: 上方自动获取</div>
       </div>
-      
+
       <div class="form-group">
         <label>控制面板 UI</label>
         <select id="clashUICf">
@@ -329,13 +337,25 @@
           <option value="yacd">Yacd</option>
           <option value="razord">Razord</option>
         </select>
+        <div class="hint">仅用于 OpenClash 控制面板访问</div>
       </div>
 
-      <button class="btn-secondary" id="testClashApiCf">测试 Clash API 连接</button>
+      <div class="btn-group">
+        <button class="btn-secondary" id="testClashApiCf">测试 Clash API 连接</button>
+        <button class="btn-secondary" id="fetchClashGroupsCf">获取代理组</button>
+      </div>
       <div id="statusClashApiCf" class="status"></div>
 
+      <div class="form-group" style="margin-top: 16px;">
+        <label>代理组</label>
+        <select id="clashProxyGroupCf" disabled>
+          <option value="">请先获取代理组列表</option>
+        </select>
+        <div class="hint">选择规则匹配后使用的代理组</div>
+      </div>
+
       <hr>
-      
+
       <h3>Clash Verge 配置</h3>
       <div class="hint" style="margin-bottom: 12px;">复制以下配置到 Clash Verge → 配置 → 全局扩展配置</div>
       <textarea id="clashVergeMerge" readonly style="
@@ -385,24 +405,30 @@
       <div id="statusRemote" class="status"></div>
       
       <hr>
-      
-      <h2>OpenClash 外部控制</h2>
-      
+
+      <h2>Clash 外部控制</h2>
+
+      <div class="form-group">
+        <label>Clash API 地址</label>
+        <input type="text" id="clashHost" placeholder="127.0.0.1 或 192.168.1.1 或 http://example.com">
+        <div class="hint">Clash 外部控制地址（本地 Clash Verge 填 127.0.0.1，远程 OpenClash 填路由器 IP）</div>
+      </div>
+
       <div class="form-group">
         <label>外部控制端口</label>
         <input type="number" id="clashPort" placeholder="9090" value="9090">
-        <div class="hint">OpenClash 外部控制端口，默认 9090</div>
+        <div class="hint">Clash 外部控制端口，默认 9090</div>
       </div>
-      
+
       <div class="form-group">
         <label>Secret（密钥）</label>
         <div class="password-wrapper">
-          <input type="password" id="clashSecret" placeholder="留空表示无密码">
+          <input type="password" id="clashSecret" placeholder="填写 Clash 外部控制密钥">
           <button type="button" class="password-toggle" id="toggleSecret">👁️</button>
         </div>
-        <div class="hint">OpenClash 外部控制密钥</div>
+        <div class="hint">Clash Verge: 设置 → 外部控制 → Secret；OpenClash: 上方自动获取</div>
       </div>
-      
+
       <div class="form-group">
         <label>控制面板 UI</label>
         <select id="clashUI">
@@ -411,6 +437,7 @@
           <option value="yacd">Yacd</option>
           <option value="razord">Razord</option>
         </select>
+        <div class="hint">仅用于 OpenClash 控制面板访问</div>
       </div>
 
       <button class="btn-secondary" id="testClashApi">测试 Clash API 连接</button>

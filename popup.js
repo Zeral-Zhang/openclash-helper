@@ -271,41 +271,73 @@ async function addRule(type) {
   }
   
   try {
-    const { config } = await chrome.storage.local.get(['config']);
-    
-    if (syncMode === 'remote') {
+    const { config, cloudflareConfig, localClientConfig, syncMode } = await chrome.storage.local.get(['config', 'cloudflareConfig', 'localClientConfig', 'syncMode']);
+    const mode = syncMode || 'cloudflare';
+
+    showStatus(`✓ 已添加，正在刷新规则集...`, 'success');
+
+    if (mode === 'remote') {
       if (!config || !config.host) {
         showStatus('请先配置路由器信息', 'error');
         setTimeout(() => chrome.runtime.openOptionsPage(), 1500);
         return;
       }
-      
+      // 1. Add rule to router file
       const api = new OpenClashAPI(config);
       await api.addRule(domainToAdd, type, matchType);
-      showStatus(`✓ 已添加，正在刷新规则集...`, 'success');
       
-      // 刷新规则集
-      await refreshRuleProviders(config, type, 'remote');
-    } else {
-      const { cloudflareConfig } = await chrome.storage.local.get(['cloudflareConfig']);
+      // 2. Refresh OpenClash on router
+      const routerClashTarget = {
+        host: config.host.split(':')[0],
+        port: config.clashPort,
+        secret: config.clashSecret,
+      };
+      await refreshRuleProviders(routerClashTarget, type, 'remote');
+      
+    } else { // cloudflare mode
       if (!cloudflareConfig || !cloudflareConfig.workerUrl) {
         showStatus('请先配置 Cloudflare Worker', 'error');
         setTimeout(() => chrome.runtime.openOptionsPage(), 1500);
         return;
       }
-      
+
+      // 1. Add rule to Cloudflare
       const api = new CloudflareAPI(cloudflareConfig);
       await api.addRule(domainToAdd, type, matchType);
-      showStatus(`✓ 已添加，正在刷新规则集...`, 'success');
-      
-      // 刷新规则集
-      if (config && config.host) {
-        await refreshRuleProviders(config, type, 'cloudflare');
+
+      // 2. Refresh all configured Clash clients (OpenClash + Clash Verge)
+      const refreshPromises = [];
+
+      // Refresh local Clash client (Clash Verge)
+      if (localClientConfig && localClientConfig.host) {
+        refreshPromises.push(
+          refreshRuleProviders(localClientConfig, type, 'cloudflare').catch(e =>
+            console.log('Clash Verge 刷新失败:', e.message)
+          )
+        );
       }
+
+      // Refresh OpenClash on router (if configured)
+      if (config && config.host) {
+        const routerClashTarget = {
+          host: config.host.split(':')[0],
+          port: config.clashPort,
+          secret: config.clashSecret,
+        };
+        refreshPromises.push(
+          refreshRuleProviders(routerClashTarget, type, 'cloudflare').catch(e =>
+            console.log('OpenClash 刷新失败:', e.message)
+          )
+        );
+      }
+
+      // Wait for all refresh operations
+      await Promise.all(refreshPromises);
     }
     
-    // 倒计时刷新页面
+    // 3. Start countdown to refresh the page
     startCountdownRefresh();
+
   } catch (e) {
     if (e.message === 'RULE_EXISTS') {
       showStatus('该规则已存在', 'error');
@@ -315,12 +347,15 @@ async function addRule(type) {
   }
 }
 
-// 刷新规则集
-async function refreshRuleProviders(config, type, mode) {
+// 通用刷新规则集函数
+async function refreshRuleProviders(targetConfig, type, mode) {
+  if (!targetConfig || !targetConfig.host) {
+    console.log('Refresh skipped: target configuration not found.');
+    return;
+  }
+
   try {
-    const [hostPart] = config.host.split(':');
-    const port = config.clashPort || '9090';
-    const secret = config.clashSecret || '';
+    const { host, port, secret } = targetConfig;
     const headers = { 'Content-Type': 'application/json' };
     if (secret) headers['Authorization'] = `Bearer ${secret}`;
     
@@ -328,16 +363,24 @@ async function refreshRuleProviders(config, type, mode) {
     let providerName;
     if (mode === 'remote') {
       providerName = type === 'PROXY' ? 'Rule-provider%20-%20Custom_Proxy' : 'Rule-provider%20-%20Custom_Direct';
-    } else {
+    } else { // cloudflare
       providerName = type === 'PROXY' ? 'Rule-provider%20-%20Cloud_Proxy' : 'Rule-provider%20-%20Cloud_Direct';
     }
     
-    await fetch(`http://${hostPart}:${port}/providers/rules/${providerName}`, {
+    const url = `http://${host}:${port}/providers/rules/${providerName}`;
+    console.log(`Attempting to refresh rule provider at: ${url}`);
+
+    await fetch(url, {
       method: 'PUT',
-      headers
+      headers,
+      signal: AbortSignal.timeout(5000) // 5 second timeout
     });
+    
+    console.log(`Successfully triggered rule refresh on ${host}:${port}`);
+    showStatus(`✓ ${host} 规则集已刷新`, 'success');
   } catch (e) {
-    console.log('刷新规则集失败:', e.message);
+    console.error(`刷新 ${targetConfig.host} 规则集失败:`, e);
+    showStatus(`刷新 ${targetConfig.host} 失败: ${e.message}`, 'error');
   }
 }
 
