@@ -3,6 +3,81 @@ let currentPort = '';
 let isIP = false;
 let syncMode = 'cloudflare';
 
+let popupTheme = 'system';
+const THEME_STORAGE_KEY = 'appTheme';
+const systemThemeQuery = window.matchMedia('(prefers-color-scheme: light)');
+
+function getEffectiveTheme(theme) {
+  if (theme === 'light' || theme === 'dark') {
+    return theme;
+  }
+  return systemThemeQuery.matches ? 'light' : 'dark';
+}
+
+function updateThemeToggle(theme) {
+  const button = document.getElementById('themeToggle');
+  if (!button) return;
+
+  const labelMap = {
+    system: '主题：跟随系统',
+    dark: '主题：深色',
+    light: '主题：浅色'
+  };
+  const iconMap = {
+    system: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18"/><path d="M12 5a7 7 0 1 0 0 14Z"/></svg>',
+    dark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg>',
+    light: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2.2M12 19.8V22M4.93 4.93l1.56 1.56M17.51 17.51l1.56 1.56M2 12h2.2M19.8 12H22M4.93 19.07l1.56-1.56M17.51 6.49l1.56-1.56"/></svg>'
+  };
+
+  button.innerHTML = iconMap[theme] || iconMap.system;
+  button.dataset.tooltip = labelMap[theme] || labelMap.system;
+  button.setAttribute('aria-label', labelMap[theme] || labelMap.system);
+  button.title = labelMap[theme] || labelMap.system;
+}
+
+function applyPopupTheme(theme) {
+  popupTheme = theme || 'system';
+  document.documentElement.dataset.theme = getEffectiveTheme(popupTheme);
+  updateThemeToggle(popupTheme);
+}
+
+async function initPopupTheme() {
+  const stored = await chrome.storage.local.get([THEME_STORAGE_KEY, 'popupTheme']);
+  applyPopupTheme(stored[THEME_STORAGE_KEY] || stored.popupTheme || 'system');
+}
+
+async function cyclePopupTheme() {
+  const themeOrder = ['system', 'dark', 'light'];
+  const currentIndex = themeOrder.indexOf(popupTheme);
+  const nextTheme = themeOrder[(currentIndex + 1) % themeOrder.length];
+  applyPopupTheme(nextTheme);
+  await chrome.storage.local.set({ [THEME_STORAGE_KEY]: nextTheme, popupTheme: nextTheme });
+}
+
+function renderAccessStatus(kind, message, quickProxy = false) {
+  const statusEl = document.getElementById('accessStatus');
+  if (!statusEl) return;
+
+  if (quickProxy) {
+    statusEl.innerHTML = `
+      <div class="proxy-hint">
+        <div>⚠️ ${message}</div>
+        <button class="quick-proxy-btn" id="quickProxy">一键添加到代理规则</button>
+      </div>
+    `;
+    document.getElementById('quickProxy')?.addEventListener('click', () => addRule('PROXY'));
+    return;
+  }
+
+  statusEl.innerHTML = `<div class="status-note ${kind}">${message}</div>`;
+}
+
+systemThemeQuery.addEventListener('change', () => {
+  if (popupTheme === 'system') {
+    applyPopupTheme('system');
+  }
+});
+
 // 检查是否为 IP 地址
 function isIPAddress(str) {
   const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
@@ -22,30 +97,36 @@ function extractRootDomain(domain) {
 }
 
 // 获取当前网站信息
-chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-  const tab = tabs[0];
+(async function initPopup() {
+  await initPopupTheme();
+  document.getElementById('themeToggle')?.addEventListener('click', cyclePopupTheme);
+  document.getElementById('versionBadge').textContent = `v${chrome.runtime.getManifest().version}`;
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.url) {
+    document.getElementById('current').textContent = '无法读取当前页面';
+    document.getElementById('currentMeta').textContent = '请切换到普通网页后再使用';
+    renderAccessStatus('warning', '当前页面不支持规则添加');
+    return;
+  }
+
   const url = new URL(tab.url);
   currentDomain = url.hostname;
   currentPort = url.port;
   isIP = isIPAddress(currentDomain);
-  
-  // 加载保存的模式
+
   const { syncMode: savedMode } = await chrome.storage.local.get(['syncMode']);
   syncMode = savedMode || 'cloudflare';
-  
-  // 显示当前网站信息
-  if (isIP) {
-    document.getElementById('current').textContent = `当前 IP: ${currentDomain}${currentPort ? ':' + currentPort : ''}`;
-  } else {
-    document.getElementById('current').textContent = `当前域名: ${currentDomain}${currentPort ? ':' + currentPort : ''}`;
-  }
-  
-  // 智能显示规则类型
+
+  document.getElementById('current').textContent = `${currentDomain}${currentPort ? ':' + currentPort : ''}`;
+  document.getElementById('currentLabel').textContent = isIP ? '当前 IP' : '当前域名';
+  document.getElementById('currentMeta').textContent = isIP
+    ? `页面类型：IP 地址${currentPort ? ` · 端口：${currentPort}` : ''}`
+    : `页面类型：域名${currentPort ? ` · 端口：${currentPort}` : ' · 默认端口'}`;
+
   renderRuleTypes();
-  
-  // 检测访问状态
   await checkAccessibility(tab);
-});
+})();
 
 // 智能渲染规则类型
 function renderRuleTypes() {
@@ -120,56 +201,39 @@ function updateDomainPreview() {
   if (!matchType) return;
   
   if (matchType === 'IP-CIDR') {
-    preview.textContent = `将添加: ${currentDomain}/32`;
-    preview.style.color = '#6366f1';
+    preview.textContent = `将添加：${currentDomain}/32`;
   } else if (matchType === 'DST-PORT') {
-    preview.textContent = `将添加: ${currentPort}`;
-    preview.style.color = '#8b5cf6';
+    preview.textContent = `将添加：端口 ${currentPort}`;
   } else if (matchType === 'DOMAIN-SUFFIX') {
     const rootDomain = extractRootDomain(currentDomain);
-    if (rootDomain !== currentDomain) {
-      preview.textContent = `将添加: ${rootDomain} (从 ${currentDomain} 提取)`;
-      preview.style.color = '#f59e0b';
-    } else {
-      preview.textContent = `将添加: ${currentDomain}`;
-      preview.style.color = '#6b7280';
-    }
+    preview.textContent = rootDomain !== currentDomain
+      ? `将添加：${rootDomain}（从 ${currentDomain} 提取）`
+      : `将添加：${currentDomain}`;
   } else {
-    preview.textContent = `将添加: ${currentDomain}`;
-    preview.style.color = '#6b7280';
+    preview.textContent = `将添加：${currentDomain}`;
   }
 }
 
 // 检测访问状态
 async function checkAccessibility(tab) {
-  const statusEl = document.getElementById('accessStatus');
-
-  // 检查错误页面
   if (tab.url.startsWith('chrome-error://')) {
     showProxyHint('网站无法访问');
     return;
   }
 
-  // 检查页面标题中的错误信息
   if (tab.title && (tab.title.includes('无法访问') || tab.title.includes('ERR_'))) {
     showProxyHint('页面加载失败');
     return;
   }
 
-  // IP 地址提示
   if (isIP) {
-    statusEl.innerHTML = `
-      <div style="background: #e0e7ff; color: #3730a3; font-size: 12px; margin-top: 8px; padding: 8px 10px; border-radius: 4px; border-left: 3px solid #6366f1; font-weight: 500;">
-        ℹ️ IP 地址将使用 IP-CIDR 规则
-      </div>
-    `;
+    renderAccessStatus('info', 'ℹ️ 当前页面是 IP 地址，将优先使用 IP-CIDR 规则。');
     return;
   }
 
-  statusEl.innerHTML = '<div style="background: #f3f4f6; color: #6b7280; font-size: 12px; margin-top: 8px; padding: 8px 10px; border-radius: 4px; border-left: 3px solid #9ca3af; font-weight: 500;">🔍 检测连接状态...</div>';
+  renderAccessStatus('info', '🔍 正在检测当前站点的访问状态...');
 
   try {
-    // 方案1: 先尝试使用 fetch 快速检测 (更快但可能遇到 CORS)
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 3000);
 
@@ -180,13 +244,8 @@ async function checkAccessibility(tab) {
     });
 
     clearTimeout(timeout);
-    statusEl.innerHTML = `
-      <div style="background: #d1fae5; color: #065f46; font-size: 12px; margin-top: 8px; padding: 8px 10px; border-radius: 4px; border-left: 3px solid #10b981; font-weight: 500;">
-        ✓ 网站可正常访问
-      </div>
-    `;
+    renderAccessStatus('success', '✓ 网站可正常访问');
   } catch (e) {
-    // 如果 fetch 失败,输出错误到控制台方便排查
     console.log('[可达性检测] fetch 失败:', {
       domain: currentDomain,
       error: e.message,
@@ -194,62 +253,33 @@ async function checkAccessibility(tab) {
       errorStack: e.stack
     });
 
-    // 使用备用方案: Chrome API 检测页面状态
     try {
       const results = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: () => {
-          return {
-            loaded: document.readyState === 'complete' || document.readyState === 'interactive',
-            hasContent: document.body && document.body.children.length > 0
-          };
-        }
+        func: () => ({
+          loaded: document.readyState === 'complete' || document.readyState === 'interactive',
+          hasContent: document.body && document.body.children.length > 0
+        })
       }).catch(() => null);
 
       if (results && results[0]?.result?.loaded && results[0]?.result?.hasContent) {
-        // 页面已正常加载,但 fetch 失败,可能是 CORS 限制
-        console.log('[可达性检测] 备用方案检测成功,页面已正常加载');
-        statusEl.innerHTML = `
-          <div style="background: #d1fae5; color: #065f46; font-size: 12px; margin-top: 8px; padding: 8px 10px; border-radius: 4px; border-left: 3px solid #10b981; font-weight: 500;">
-            ✓ 网站可正常访问
-          </div>
-        `;
+        renderAccessStatus('success', '✓ 网站可正常访问');
       } else {
-        // 页面加载失败
-        console.log('[可达性检测] 备用方案检测失败,页面未正常加载');
-        showProxyHint(e.name === 'AbortError' ? '连接超时' : '网络错误');
+        showProxyHint(e.name === 'AbortError' ? '连接超时，建议使用代理' : '网络错误，建议使用代理');
       }
     } catch (scriptError) {
-      // 如果两种方法都失败,根据 tab 状态判断
       console.log('[可达性检测] 备用方案执行失败:', scriptError.message);
       if (tab.status === 'complete') {
-        statusEl.innerHTML = `
-          <div style="background: #fef3c7; color: #92400e; font-size: 12px; margin-top: 8px; padding: 8px 10px; border-radius: 4px; border-left: 3px solid #f59e0b; font-weight: 500;">
-            ⚠️ 无法检测访问状态
-          </div>
-        `;
+        renderAccessStatus('warning', '⚠️ 无法准确检测访问状态，可按需手动添加规则');
       } else {
-        showProxyHint('页面加载失败');
+        showProxyHint('页面加载失败，建议使用代理');
       }
     }
   }
 }
 
-// 显示代理建议
 function showProxyHint(reason) {
-  const statusEl = document.getElementById('accessStatus');
-  statusEl.innerHTML = `
-    <div style="background: #fef2f2; padding: 10px; border-radius: 6px; margin-top: 8px;">
-      <div style="color: #dc2626; font-size: 12px; margin-bottom: 8px;">
-        ⚠️ ${reason}，建议使用代理
-      </div>
-      <button id="quickProxy" style="width: 100%; padding: 8px; background: #10b981; color: white; border: none; border-radius: 4px; font-size: 12px; font-weight: 500; cursor: pointer;">
-        一键添加到代理规则
-      </button>
-    </div>
-  `;
-  
-  document.getElementById('quickProxy').onclick = () => addRule('PROXY');
+  renderAccessStatus('warning', reason, true);
 }
 
 // 添加规则
@@ -274,7 +304,9 @@ async function addRule(type) {
     const { config, cloudflareConfig, localClientConfig, syncMode } = await chrome.storage.local.get(['config', 'cloudflareConfig', 'localClientConfig', 'syncMode']);
     const mode = syncMode || 'cloudflare';
 
-    showStatus(`✓ 已添加，正在刷新规则集...`, 'success');
+    showStatus(mode === 'cloudflare' && localClientConfig?.host
+      ? '✓ 已添加，正在刷新本地 Clash 规则集...'
+      : '✓ 已添加', 'success');
 
     if (mode === 'remote') {
       if (!config || !config.host) {
@@ -282,60 +314,23 @@ async function addRule(type) {
         setTimeout(() => chrome.runtime.openOptionsPage(), 1500);
         return;
       }
-      // 1. Add rule to router file
+
       const api = new OpenClashAPI(config);
       await api.addRule(domainToAdd, type, matchType);
-      
-      // 2. Refresh OpenClash on router
-      const routerClashTarget = {
-        host: config.host.split(':')[0],
-        port: config.clashPort,
-        secret: config.clashSecret,
-      };
-      await refreshRuleProviders(routerClashTarget, type, 'remote');
-      
-    } else { // cloudflare mode
+      await refreshConfiguredRuleProviders(type);
+    } else {
       if (!cloudflareConfig || !cloudflareConfig.workerUrl) {
         showStatus('请先配置 Cloudflare Worker', 'error');
         setTimeout(() => chrome.runtime.openOptionsPage(), 1500);
         return;
       }
 
-      // 1. Add rule to Cloudflare
       const api = new CloudflareAPI(cloudflareConfig);
       await api.addRule(domainToAdd, type, matchType);
-
-      // 2. Refresh all configured Clash clients (OpenClash + Clash Verge)
-      const refreshPromises = [];
-
-      // Refresh local Clash client (Clash Verge)
-      if (localClientConfig && localClientConfig.host) {
-        refreshPromises.push(
-          refreshRuleProviders(localClientConfig, type, 'cloudflare').catch(e =>
-            console.log('Clash Verge 刷新失败:', e.message)
-          )
-        );
-      }
-
-      // Refresh OpenClash on router (if configured)
-      if (config && config.host) {
-        const routerClashTarget = {
-          host: config.host.split(':')[0],
-          port: config.clashPort,
-          secret: config.clashSecret,
-        };
-        refreshPromises.push(
-          refreshRuleProviders(routerClashTarget, type, 'cloudflare').catch(e =>
-            console.log('OpenClash 刷新失败:', e.message)
-          )
-        );
-      }
-
-      // Wait for all refresh operations
-      await Promise.all(refreshPromises);
+      await refreshConfiguredRuleProviders(type);
     }
     
-    // 3. Start countdown to refresh the page
+    await notifyBackupChanged('popup_add_rule');
     startCountdownRefresh();
 
   } catch (e) {
@@ -349,35 +344,38 @@ async function addRule(type) {
 
 // 通用刷新规则集函数
 async function refreshRuleProviders(targetConfig, type, mode) {
-  if (!targetConfig || !targetConfig.host) {
+  const target = resolveControllerTarget(targetConfig);
+  if (!target) {
     console.log('Refresh skipped: target configuration not found.');
     return;
   }
 
   try {
-    const { host, port, secret } = targetConfig;
     const headers = { 'Content-Type': 'application/json' };
-    if (secret) headers['Authorization'] = `Bearer ${secret}`;
+    if (target.secret) headers['Authorization'] = `Bearer ${target.secret}`;
     
-    // 根据模式使用不同的规则集名称
     let providerName;
     if (mode === 'remote') {
       providerName = type === 'PROXY' ? 'Rule-provider%20-%20Custom_Proxy' : 'Rule-provider%20-%20Custom_Direct';
-    } else { // cloudflare
+    } else {
       providerName = type === 'PROXY' ? 'Rule-provider%20-%20Cloud_Proxy' : 'Rule-provider%20-%20Cloud_Direct';
     }
     
-    const url = `http://${host}:${port}/providers/rules/${providerName}`;
+    const url = `http://${target.host}:${target.port}/providers/rules/${providerName}`;
     console.log(`Attempting to refresh rule provider at: ${url}`);
 
-    await fetch(url, {
+    const response = await fetch(url, {
       method: 'PUT',
       headers,
-      signal: AbortSignal.timeout(5000) // 5 second timeout
+      signal: AbortSignal.timeout(5000)
     });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
     
-    console.log(`Successfully triggered rule refresh on ${host}:${port}`);
-    showStatus(`✓ ${host} 规则集已刷新`, 'success');
+    console.log(`Successfully triggered rule refresh on ${target.host}:${target.port}`);
+    showStatus(`✓ ${target.host} 规则集已刷新`, 'success');
   } catch (e) {
     console.error(`刷新 ${targetConfig.host} 规则集失败:`, e);
     showStatus(`刷新 ${targetConfig.host} 失败: ${e.message}`, 'error');
@@ -411,6 +409,151 @@ function showStatus(msg, type) {
   setTimeout(() => status.className = 'status', 3000);
 }
 
+function parseClashAddress(address) {
+  if (!address) return null;
+  let value = address.trim();
+
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      return { host: url.hostname, port: url.port || null };
+    } catch (error) {
+      return null;
+    }
+  }
+
+  value = value.replace(/\/$/, '');
+  const parts = value.split(':');
+  if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+    return { host: parts[0], port: parts[1] };
+  }
+  return { host: value, port: null };
+}
+
+function resolveControllerTarget(targetConfig) {
+  const parsed = parseClashAddress(targetConfig?.host || '');
+  if (!parsed?.host) {
+    return null;
+  }
+
+  return {
+    host: parsed.host,
+    port: parsed.port || targetConfig.port || '9090',
+    secret: targetConfig.secret || ''
+  };
+}
+
+
+function sameControllerTarget(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  return left.host === right.host && String(left.port || '9090') === String(right.port || '9090');
+}
+
+async function getProviderRefreshTargets() {
+  const { config, localClientConfig, syncMode, syncTestState } = await chrome.storage.local.get([
+    'config',
+    'localClientConfig',
+    'syncMode',
+    'syncTestState'
+  ]);
+
+  const mode = syncMode || 'cloudflare';
+  if (mode === 'remote') {
+    const routerTarget = resolveControllerTarget(
+      syncTestState?.remoteRouter?.target || {
+        host: config?.clashHost || config?.host?.split(':')[0],
+        port: config?.clashPort || '9090',
+        secret: config?.clashSecret || ''
+      }
+    );
+
+    return routerTarget ? [{ target: routerTarget, mode: 'remote', label: '路由器' }] : [];
+  }
+
+  const routerReady = Boolean(syncTestState?.cloudRouter?.ready);
+  const externalReady = Boolean(syncTestState?.cloudExternal?.ready);
+  const routerTarget = routerReady ? resolveControllerTarget(syncTestState?.cloudRouter?.target) : null;
+  const externalTarget = resolveControllerTarget(
+    externalReady ? syncTestState?.cloudExternal?.target : localClientConfig
+  );
+
+  const targets = [];
+  if (routerTarget) {
+    targets.push({ target: routerTarget, mode: 'cloudflare', label: '路由器' });
+  }
+
+  if (!routerReady && externalTarget) {
+    targets.push({ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' });
+  } else if (routerReady && externalReady && routerTarget && externalTarget && !sameControllerTarget(routerTarget, externalTarget)) {
+    targets.push({ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' });
+  }
+
+  return targets;
+}
+
+async function refreshConfiguredRuleProviders(type) {
+  const targets = await getProviderRefreshTargets();
+  await Promise.all(targets.map(({ target, mode, label }) =>
+    refreshRuleProviders(target, type, mode).catch(error => {
+      console.log(`刷新${label}规则集失败:`, error.message);
+    })
+  ));
+}
+
+function isHostedDashboardTarget(host) {
+  return host === '127.0.0.1' || host === 'localhost';
+}
+
+function buildDashboardUrl(target) {
+  const parsed = parseClashAddress(target.host || '');
+  if (!parsed?.host) {
+    return '';
+  }
+
+  const host = parsed.host;
+  const port = parsed.port || target.port || '9090';
+  const secret = target.secret || '';
+  const ui = target.ui || 'zashboard';
+  const encodedHost = encodeURIComponent(host);
+  const encodedPort = encodeURIComponent(port);
+  const encodedSecret = encodeURIComponent(secret);
+
+  if (isHostedDashboardTarget(host)) {
+    switch (ui) {
+      case 'yacd':
+        return `https://yacd.metacubex.one/?hostname=${encodedHost}&port=${encodedPort}&secret=${encodedSecret}`;
+      case 'dashboard':
+        return `https://metacubex.github.io/metacubexd/#/setup?http=true&hostname=${encodedHost}&port=${encodedPort}&secret=${encodedSecret}`;
+      case 'zashboard':
+      default:
+        return `https://board.zash.run.place/#/setup?http=true&hostname=${encodedHost}&port=${encodedPort}&secret=${encodedSecret}`;
+    }
+  }
+
+  switch (ui) {
+    case 'yacd':
+      return `http://${host}:${port}/ui/yacd/?hostname=${encodedHost}&port=${encodedPort}&secret=${encodedSecret}`;
+    case 'dashboard':
+      return `http://${host}:${port}/ui/dashboard/?hostname=${encodedHost}&port=${encodedPort}&secret=${encodedSecret}`;
+    case 'razord':
+      return `http://${host}:${port}/ui/razord/?host=${encodedHost}&port=${encodedPort}&secret=${encodedSecret}`;
+    case 'zashboard':
+    default:
+      return `http://${host}:${port}/ui/zashboard/?hostname=${encodedHost}&port=${encodedPort}&secret=${encodedSecret}`;
+  }
+}
+
+async function notifyBackupChanged(reason) {
+  try {
+    await chrome.runtime.sendMessage({ type: 'backup-data-changed', reason });
+  } catch (error) {
+    console.log('自动同步未执行:', error.message);
+  }
+}
+
 // 打开页面
 async function openPage(url) {
   const fullUrl = chrome.runtime.getURL(url);
@@ -440,33 +583,36 @@ document.getElementById('viewRules').onclick = async () => {
 
 // 打开控制面板
 document.getElementById('openDashboard').onclick = async () => {
-  const { config } = await chrome.storage.local.get(['config']);
-  if (!config || !config.host) {
-    showStatus('请先配置路由器信息', 'error');
+  const { config, localClientConfig, syncMode } = await chrome.storage.local.get(['config', 'localClientConfig', 'syncMode']);
+  const mode = syncMode || 'cloudflare';
+
+  let target = null;
+  if (mode === 'cloudflare' && localClientConfig?.host) {
+    target = {
+      host: localClientConfig.host,
+      port: localClientConfig.port || '9090',
+      secret: localClientConfig.secret || '',
+      ui: localClientConfig.ui || 'zashboard'
+    };
+  } else if (config?.host) {
+    target = {
+      host: config.clashHost || config.host.split(':')[0],
+      port: config.clashPort || '9090',
+      secret: config.clashSecret || '',
+      ui: config.clashUI || 'zashboard'
+    };
+  }
+
+  if (!target?.host) {
+    showStatus('请先配置控制面板 API 地址', 'error');
     return;
   }
-  
-  const [hostPart] = config.host.split(':');
-  const port = config.clashPort || '9090';
-  const ui = config.clashUI || 'zashboard';
-  const secret = config.clashSecret || '';
-  
-  let url = '';
-  switch (ui) {
-    case 'yacd':
-      url = `http://${hostPart}:${port}/ui/yacd/?hostname=${hostPart}&port=${port}&secret=${secret}`;
-      break;
-    case 'dashboard':
-      url = `http://${hostPart}:${port}/ui/dashboard/?hostname=${hostPart}&port=${port}&secret=${secret}`;
-      break;
-    case 'razord':
-      url = `http://${hostPart}:${port}/ui/razord/?host=${hostPart}&port=${port}&secret=${secret}`;
-      break;
-    case 'zashboard':
-    default:
-      url = `http://${hostPart}:${port}/ui/zashboard/?hostname=${hostPart}&port=${port}&secret=${secret}`;
-      break;
+
+  const url = buildDashboardUrl(target);
+  if (!url) {
+    showStatus('控制面板地址无效', 'error');
+    return;
   }
-  
+
   chrome.tabs.create({ url });
 };

@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "OpenClash 规则助手",
   "version": "2.0",
-  "description": "快速添加网站到 OpenClash 规则,支持远程同步和本地存储",
-  "permissions": ["activeTab", "contextMenus", "storage", "scripting"],
+  "description": "快速添加网站到 OpenClash 规则，支持路由器同步、云端同步与 WebDAV 备份",
+  "permissions": ["activeTab", "contextMenus", "storage", "scripting", "alarms"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"

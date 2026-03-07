@@ -15,8 +15,17 @@ class OpenClashAPI {
         params: [this.config.username, this.config.password]
       })
     });
+
+    if (!response.ok) {
+      throw new Error(`登录失败: HTTP ${response.status}`);
+    }
+
     const data = await response.json();
     if (data.error) throw new Error(`登录失败: ${data.error.message}`);
+    if (!data.result || !String(data.result).trim()) {
+      throw new Error('登录失败: 路由器未返回有效 result');
+    }
+
     this.token = data.result;
     
     // 首次登录时检查 Base64 支持

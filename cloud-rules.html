@@ -5,206 +5,273 @@
   <title>规则管理</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --panel: #101d38;
+      --panel-soft: #15264a;
+      --border: rgba(129, 155, 255, 0.18);
+      --text: #f3f7ff;
+      --text-soft: #a9b7d4;
+      --text-dim: #8090b3;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: #eef4ff;
+      --bg-soft: #f7faff;
+      --panel: #ffffff;
+      --panel-strong: #f5f8ff;
+      --panel-hover: #edf3ff;
+      --border: rgba(84, 112, 219, 0.16);
+      --border-strong: rgba(84, 112, 219, 0.24);
+      --text: #12213f;
+      --text-soft: #4e5e82;
+      --text-dim: #7d8ba8;
+      --primary: #3f6fff;
+      --primary-hover: #2d5dff;
+      --success: #16a34a;
+      --danger: #dc2626;
+      --warning: #d97706;
+      --shadow: 0 20px 42px rgba(57, 78, 137, 0.16);
+    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #f5f5f5;
-      padding: 20px;
+      background:
+        radial-gradient(circle at top, rgba(59, 130, 246, 0.12), transparent 30%),
+        linear-gradient(180deg, #0a1326 0%, var(--bg) 100%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 22px;
     }
-    .container {
-      max-width: 800px;
+    .page {
+      max-width: 1180px;
       margin: 0 auto;
+      display: grid;
+      gap: 18px;
     }
-    h1 {
-      font-size: 24px;
-      margin-bottom: 20px;
-      color: #111827;
+    .page-header,
+    .card {
+      background: linear-gradient(180deg, rgba(16, 29, 56, 0.98), rgba(13, 24, 46, 0.98));
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+    }
+    .page-header {
+      padding: 22px 24px;
+    }
+    .page-title {
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .page-subtitle {
+      color: var(--text-soft);
+      font-size: 14px;
+      line-height: 1.7;
     }
     .card {
-      background: white;
-      border-radius: 8px;
-      padding: 20px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-      margin-bottom: 16px;
+      padding: 22px;
     }
     .stats {
-      display: flex;
-      gap: 24px;
-      margin-bottom: 16px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid #e5e7eb;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
     }
     .stat-item {
-      font-size: 14px;
-      color: #6b7280;
+      padding: 18px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(129, 155, 255, 0.12);
     }
     .stat-value {
-      font-size: 24px;
-      font-weight: 600;
-      color: #111827;
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 8px;
     }
-    .btn-group {
+    .stat-label {
+      font-size: 13px;
+      color: var(--text-soft);
+    }
+    .toolbar {
       display: flex;
-      gap: 8px;
-      margin-bottom: 16px;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
     }
     button {
-      padding: 10px 16px;
-      border: none;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 500;
+      padding: 12px 16px;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.2s ease;
     }
     .btn-primary {
-      background: #667eea;
+      background: linear-gradient(90deg, var(--primary), #4f7fff);
       color: white;
     }
-    .btn-primary:hover { background: #5568d3; }
-    .btn-danger {
-      background: #ef4444;
-      color: white;
-    }
-    .btn-danger:hover { background: #dc2626; }
+    .btn-primary:hover { background: linear-gradient(90deg, var(--primary-hover), #3e6dff); }
     .btn-secondary {
-      background: #e5e7eb;
-      color: #374151;
+      background: rgba(29, 46, 82, 0.88);
+      color: #dce7ff;
+      border-color: rgba(129, 155, 255, 0.14);
     }
-    .btn-secondary:hover { background: #d1d5db; }
+    .btn-secondary:hover { background: rgba(37, 58, 101, 0.95); }
+    .btn-danger {
+      background: linear-gradient(90deg, #dc2626, #ef4444);
+      color: white;
+    }
+    .btn-danger:hover { background: linear-gradient(90deg, #b91c1c, #dc2626); }
     .tabs {
       display: flex;
-      gap: 4px;
-      margin-bottom: 16px;
-      border-bottom: 1px solid #e5e7eb;
-      padding-bottom: 0;
+      gap: 10px;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
     }
     .tab {
-      padding: 10px 20px;
-      background: none;
-      border: none;
-      border-bottom: 2px solid transparent;
-      color: #6b7280;
-      cursor: pointer;
+      padding: 10px 16px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(129, 155, 255, 0.12);
+      border-radius: 999px;
+      color: var(--text-soft);
       font-size: 14px;
-      font-weight: 500;
-      margin-bottom: -1px;
+      font-weight: 600;
     }
     .tab.active {
-      color: #667eea;
-      border-bottom-color: #667eea;
-    }
-    .tab:hover:not(.active) {
-      color: #374151;
+      background: linear-gradient(90deg, rgba(59, 130, 246, 0.95), rgba(74, 115, 255, 0.92));
+      color: white;
+      box-shadow: 0 10px 20px rgba(59, 130, 246, 0.22);
     }
     .rule-list {
-      max-height: 400px;
+      display: grid;
+      gap: 12px;
+      max-height: 520px;
       overflow-y: auto;
+      padding-right: 4px;
     }
     .rule-item {
-      padding: 12px;
-      border-bottom: 1px solid #f3f4f6;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(129, 155, 255, 0.12);
       display: flex;
       justify-content: space-between;
+      gap: 12px;
       align-items: center;
     }
-    .rule-item:last-child {
-      border-bottom: none;
-    }
-    .rule-info {
-      flex: 1;
-    }
+    .rule-info { flex: 1; min-width: 0; }
     .rule-domain {
-      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      font-family: 'SFMono-Regular', Consolas, monospace;
       font-size: 13px;
-      color: #111827;
-      margin-bottom: 4px;
+      color: #eef4ff;
+      margin-bottom: 8px;
+      word-break: break-all;
     }
     .rule-meta {
       font-size: 12px;
-      color: #6b7280;
+      color: var(--text-soft);
       display: flex;
-      gap: 12px;
+      gap: 10px;
+      flex-wrap: wrap;
     }
     .badge {
-      padding: 2px 8px;
-      border-radius: 4px;
+      padding: 4px 10px;
+      border-radius: 999px;
       font-size: 11px;
-      font-weight: 500;
+      font-weight: 700;
     }
-    .badge.proxy { background: #d1fae5; color: #065f46; }
-    .badge.direct { background: #fef3c7; color: #92400e; }
-    .badge.suffix { background: #dbeafe; color: #1e40af; }
-    .badge.domain { background: #e0e7ff; color: #3730a3; }
+    .badge.proxy { background: rgba(34, 197, 94, 0.14); color: #86efac; }
+    .badge.direct { background: rgba(245, 158, 11, 0.14); color: #fcd34d; }
+    .badge.suffix { background: rgba(59, 130, 246, 0.14); color: #93c5fd; }
+    .badge.domain { background: rgba(129, 140, 248, 0.14); color: #c7d2fe; }
+    .empty {
+      text-align: center;
+      padding: 48px 20px;
+      color: var(--text-dim);
+      border: 1px dashed rgba(129, 155, 255, 0.16);
+      border-radius: 16px;
+      background: rgba(255,255,255,0.02);
+    }
     textarea {
       width: 100%;
-      height: 300px;
-      padding: 12px;
-      border: 1px solid #d1d5db;
-      border-radius: 6px;
-      font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+      height: 320px;
+      padding: 14px;
+      border: 1px solid rgba(129, 155, 255, 0.18);
+      border-radius: 14px;
+      background: rgba(9, 16, 31, 0.95);
+      color: var(--text);
+      font-family: 'SFMono-Regular', Consolas, monospace;
       font-size: 13px;
       line-height: 1.6;
       resize: vertical;
     }
-    .empty {
-      text-align: center;
-      padding: 40px;
-      color: #6b7280;
-    }
     .status {
-      margin-top: 12px;
-      padding: 10px;
-      border-radius: 6px;
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 12px;
       font-size: 13px;
-      text-align: center;
+      line-height: 1.6;
       display: none;
     }
     .status.success {
-      background: #d1fae5;
-      color: #065f46;
+      background: rgba(34, 197, 94, 0.14);
+      color: #8ef0b0;
+      border: 1px solid rgba(34, 197, 94, 0.24);
       display: block;
     }
+    @media (max-width: 760px) {
+      body { padding: 14px; }
+      .stats { grid-template-columns: 1fr; }
+      .toolbar { display: grid; grid-template-columns: 1fr 1fr; }
+      .rule-item { flex-direction: column; align-items: stretch; }
+    }
+  
+    :root[data-theme="light"] body { background: radial-gradient(circle at top, rgba(77, 124, 255, 0.12), transparent 28%), linear-gradient(180deg, #f7faff 0%, #eef4ff 100%); }
+    :root[data-theme="light"] .page-header,
+    :root[data-theme="light"] .card { background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(246,249,255,0.98)); }
+
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>规则管理</h1>
-    
+  <div class="page">
+    <div class="page-header">
+      <div class="page-title">规则管理</div>
+      <div class="page-subtitle">统一查看和维护云端规则，支持筛选、导出、复制与清空操作。</div>
+    </div>
+
     <div class="card">
       <div class="stats">
-        <div class="stat-item">
-          <div class="stat-value" id="totalCount">0</div>
-          <div>总规则数</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-value" id="proxyCount">0</div>
-          <div>代理规则</div>
-        </div>
-        <div class="stat-item">
-          <div class="stat-value" id="directCount">0</div>
-          <div>直连规则</div>
-        </div>
+        <div class="stat-item"><div class="stat-value" id="totalCount">0</div><div class="stat-label">总规则数</div></div>
+        <div class="stat-item"><div class="stat-value" id="proxyCount">0</div><div class="stat-label">代理规则</div></div>
+        <div class="stat-item"><div class="stat-value" id="directCount">0</div><div class="stat-label">直连规则</div></div>
       </div>
-      
-      <div class="btn-group">
-        <button class="btn-secondary" id="refreshRules">🔄 刷新</button>
-        <button class="btn-primary" id="exportYaml">导出为 YAML</button>
+
+      <div class="toolbar">
+        <button class="btn-secondary" id="refreshRules">刷新</button>
+        <button class="btn-primary" id="exportYaml">导出 YAML</button>
         <button class="btn-secondary" id="copyYaml">复制 YAML</button>
         <button class="btn-danger" id="clearAll">清空所有</button>
       </div>
-      
+
       <div class="tabs">
         <button class="tab active" data-tab="all">全部</button>
         <button class="tab" data-tab="proxy">代理规则</button>
         <button class="tab" data-tab="direct">直连规则</button>
       </div>
-      
+
       <div class="rule-list" id="ruleList"></div>
       <div class="empty" id="emptyState">暂无规则</div>
     </div>
 
     <div class="card" id="yamlCard" style="display:none;">
-      <h2 style="font-size: 16px; margin-bottom: 12px;">YAML 格式</h2>
+      <div class="page-subtitle" style="margin-bottom: 14px;">YAML 预览</div>
       <textarea id="yamlOutput" readonly></textarea>
       <div class="status" id="status"></div>
     </div>

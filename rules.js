@@ -1,3 +1,34 @@
+const APP_THEME_STORAGE_KEY = 'appTheme';
+const appThemeQuery = window.matchMedia('(prefers-color-scheme: light)');
+
+function resolveAppTheme(theme) {
+  if (theme === 'light' || theme === 'dark') return theme;
+  return appThemeQuery.matches ? 'light' : 'dark';
+}
+
+async function applyStoredAppTheme() {
+  const stored = await chrome.storage.local.get([APP_THEME_STORAGE_KEY, 'popupTheme']);
+  document.documentElement.dataset.theme = resolveAppTheme(stored[APP_THEME_STORAGE_KEY] || stored.popupTheme || 'system');
+}
+
+appThemeQuery.addEventListener('change', async () => {
+  const stored = await chrome.storage.local.get([APP_THEME_STORAGE_KEY, 'popupTheme']);
+  const theme = stored[APP_THEME_STORAGE_KEY] || stored.popupTheme || 'system';
+  if (theme === 'system') {
+    document.documentElement.dataset.theme = resolveAppTheme('system');
+  }
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return;
+  if (changes[APP_THEME_STORAGE_KEY] || changes.popupTheme) {
+    const nextTheme = changes[APP_THEME_STORAGE_KEY]?.newValue || changes.popupTheme?.newValue || 'system';
+    document.documentElement.dataset.theme = resolveAppTheme(nextTheme);
+  }
+});
+
+applyStoredAppTheme().catch(() => {});
+
 let currentTab = 'proxy';
 let rules = { proxy: '', direct: '' };
 let api = null;
@@ -78,6 +109,8 @@ function initEditor(content = '') {
     
     editor = ace.edit('editor');
     editor.setTheme('ace/theme/github');
+    editor.container.classList.add('ace-dark-surface');
+    editor.renderer.setScrollMargin(12, 12, 0, 0);
     editor.session.setMode('ace/mode/yaml');
     editor.setOptions({
       enableBasicAutocompletion: true,
@@ -172,6 +205,11 @@ async function saveRules() {
     
     // 保存到服务器
     await api.saveRules(rules.proxy, rules.direct);
+    await Promise.all([
+      refreshRemoteRuleProvider('proxy').catch(error => console.log('刷新代理规则集失败:', error.message)),
+      refreshRemoteRuleProvider('direct').catch(error => console.log('刷新直连规则集失败:', error.message))
+    ]);
+    await notifyBackupChanged('remote_rules_saved');
     showStatus('保存成功', 'success');
     
     // 更新统计
@@ -224,6 +262,84 @@ function showStatus(msg, type) {
   status.textContent = msg;
   status.className = 'status ' + type;
   setTimeout(() => status.className = 'status', 3000);
+}
+
+
+function parseClashAddress(address) {
+  if (!address) return null;
+
+  const value = address.trim();
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      return { host: url.hostname, port: url.port || null };
+    } catch (error) {
+      return null;
+    }
+  }
+
+  const normalized = value.replace(/\/$/, '');
+  const parts = normalized.split(':');
+  if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+    return { host: parts[0], port: parts[1] };
+  }
+
+  return { host: normalized, port: null };
+}
+
+function resolveControllerTarget(targetConfig) {
+  const parsed = parseClashAddress(targetConfig?.host || '');
+  if (!parsed?.host) {
+    return null;
+  }
+
+  return {
+    host: parsed.host,
+    port: parsed.port || targetConfig.port || '9090',
+    secret: targetConfig.secret || ''
+  };
+}
+
+async function refreshRemoteRuleProvider(type) {
+  const { config, syncTestState } = await chrome.storage.local.get(['config', 'syncTestState']);
+  const target = resolveControllerTarget(
+    syncTestState?.remoteRouter?.target || {
+      host: config?.clashHost || config?.host?.split(':')[0],
+      port: config?.clashPort || '9090',
+      secret: config?.clashSecret || ''
+    }
+  );
+
+  if (!target) {
+    return;
+  }
+
+  const providerName = type === 'proxy'
+    ? 'Rule-provider%20-%20Custom_Proxy'
+    : 'Rule-provider%20-%20Custom_Direct';
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (target.secret) {
+    headers.Authorization = `Bearer ${target.secret}`;
+  }
+
+  const response = await fetch(`http://${target.host}:${target.port}/providers/rules/${providerName}`, {
+    method: 'PUT',
+    headers,
+    signal: AbortSignal.timeout(5000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+}
+
+async function notifyBackupChanged(reason) {
+  try {
+    await chrome.runtime.sendMessage({ type: 'backup-data-changed', reason });
+  } catch (error) {
+    console.log('自动同步未执行:', error.message);
+  }
 }
 
 // 标签切换

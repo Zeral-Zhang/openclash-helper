@@ -67,7 +67,7 @@
    - Worker URL: 粘贴刚才复制的 URL
    - API Secret: 填写第 6 步设置的密码
 4. 点击 **测试 Cloudflare 连接**
-5. 测试成功后，点击 **保存配置**
+5. 测试成功后，配置会自动保存
 
 ## 配置 OpenClash/Clash Verge
 

@@ -1,3 +1,34 @@
+const APP_THEME_STORAGE_KEY = 'appTheme';
+const appThemeQuery = window.matchMedia('(prefers-color-scheme: light)');
+
+function resolveAppTheme(theme) {
+  if (theme === 'light' || theme === 'dark') return theme;
+  return appThemeQuery.matches ? 'light' : 'dark';
+}
+
+async function applyStoredAppTheme() {
+  const stored = await chrome.storage.local.get([APP_THEME_STORAGE_KEY, 'popupTheme']);
+  document.documentElement.dataset.theme = resolveAppTheme(stored[APP_THEME_STORAGE_KEY] || stored.popupTheme || 'system');
+}
+
+appThemeQuery.addEventListener('change', async () => {
+  const stored = await chrome.storage.local.get([APP_THEME_STORAGE_KEY, 'popupTheme']);
+  const theme = stored[APP_THEME_STORAGE_KEY] || stored.popupTheme || 'system';
+  if (theme === 'system') {
+    document.documentElement.dataset.theme = resolveAppTheme('system');
+  }
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return;
+  if (changes[APP_THEME_STORAGE_KEY] || changes.popupTheme) {
+    const nextTheme = changes[APP_THEME_STORAGE_KEY]?.newValue || changes.popupTheme?.newValue || 'system';
+    document.documentElement.dataset.theme = resolveAppTheme(nextTheme);
+  }
+});
+
+applyStoredAppTheme().catch(() => {});
+
 let directRules = '';
 let proxyRules = '';
 let api = null;
@@ -196,6 +227,103 @@ function showError(msg) {
   });
 }
 
+function parseClashAddress(address) {
+  if (!address) {
+    return null;
+  }
+
+  const value = address.trim();
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      return { host: url.hostname, port: url.port || null };
+    } catch (error) {
+      return null;
+    }
+  }
+
+  const normalized = value.replace(/\/$/, '');
+  const parts = normalized.split(':');
+  if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+    return { host: parts[0], port: parts[1] };
+  }
+
+  return { host: normalized, port: null };
+}
+
+function resolveControllerTarget(targetConfig) {
+  const parsed = parseClashAddress(targetConfig?.host || '');
+  if (!parsed?.host) {
+    return null;
+  }
+
+  return {
+    host: parsed.host,
+    port: parsed.port || targetConfig.port || '9090',
+    secret: targetConfig.secret || ''
+  };
+}
+
+
+function sameControllerTarget(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  return left.host === right.host && String(left.port || '9090') === String(right.port || '9090');
+}
+
+async function getProviderRefreshTargets() {
+  const { config, localClientConfig, syncMode, syncTestState } = await chrome.storage.local.get([
+    'config',
+    'localClientConfig',
+    'syncMode',
+    'syncTestState'
+  ]);
+
+  const mode = syncMode || 'cloudflare';
+  if (mode === 'remote') {
+    const routerTarget = resolveControllerTarget(
+      syncTestState?.remoteRouter?.target || {
+        host: config?.clashHost || config?.host?.split(':')[0],
+        port: config?.clashPort || '9090',
+        secret: config?.clashSecret || ''
+      }
+    );
+
+    return routerTarget ? [{ target: routerTarget, mode: 'remote', label: '路由器' }] : [];
+  }
+
+  const routerReady = Boolean(syncTestState?.cloudRouter?.ready);
+  const externalReady = Boolean(syncTestState?.cloudExternal?.ready);
+  const routerTarget = routerReady ? resolveControllerTarget(syncTestState?.cloudRouter?.target) : null;
+  const externalTarget = resolveControllerTarget(
+    externalReady ? syncTestState?.cloudExternal?.target : localClientConfig
+  );
+
+  const targets = [];
+  if (routerTarget) {
+    targets.push({ target: routerTarget, mode: 'cloudflare', label: '路由器' });
+  }
+
+  if (!routerReady && externalTarget) {
+    targets.push({ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' });
+  } else if (routerReady && externalReady && routerTarget && externalTarget && !sameControllerTarget(routerTarget, externalTarget)) {
+    targets.push({ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' });
+  }
+
+  return targets;
+}
+
+async function refreshConfiguredRuleProviders(type) {
+  const targets = await getProviderRefreshTargets();
+  await Promise.all(targets.map(({ target, mode, label }) =>
+    refreshRuleProviders(target, type, mode).catch(error => {
+      console.log(`刷新${label}规则集失败:`, error.message);
+    })
+  ));
+}
+
 // 删除规则
 async function deleteRule(type, matchType, domain) {
   if (!confirm('确定删除这条规则？')) return;
@@ -208,8 +336,9 @@ async function deleteRule(type, matchType, domain) {
     } else {
       directRules = directRules.replace(line + '\n', '').replace(line, '');
     }
-    
+
     await api.saveRules(directRules, proxyRules);
+    await notifyBackupChanged('cloud_rules_deleted');
     await loadRules();
     
     // 刷新规则集
@@ -221,58 +350,9 @@ async function deleteRule(type, matchType, domain) {
   }
 }
 
-// 刷新规则集（支持 OpenClash 和 Clash Verge）
+// 刷新规则集
 async function refreshRuleProvider(type) {
-  const { config, localClientConfig, syncMode } = await chrome.storage.local.get(['config', 'localClientConfig', 'syncMode']);
-
-  const providerName = type === 'PROXY' ? 'Rule-provider%20-%20Cloud_Proxy' : 'Rule-provider%20-%20Cloud_Direct';
-  let refreshedCount = 0;
-
-  // 刷新 OpenClash（远程模式或云端模式下的路由器）
-  if (config && config.host) {
-    try {
-      const [hostPart] = config.host.split(':');
-      const port = config.clashPort || '9090';
-      const secret = config.clashSecret || '';
-      const headers = { 'Content-Type': 'application/json' };
-      if (secret) headers['Authorization'] = `Bearer ${secret}`;
-
-      await fetch(`http://${hostPart}:${port}/providers/rules/${providerName}`, {
-        method: 'PUT',
-        headers,
-        signal: AbortSignal.timeout(5000)
-      });
-      refreshedCount++;
-      console.log(`✅ OpenClash 规则集已刷新: ${providerName}`);
-    } catch (e) {
-      console.log(`❌ OpenClash 刷新失败:`, e.message);
-    }
-  }
-
-  // 刷新 Clash Verge（云端模式下的本地客户端）
-  if (syncMode === 'cloudflare' && localClientConfig && localClientConfig.host) {
-    try {
-      const host = localClientConfig.host;
-      const port = localClientConfig.port || '9090';
-      const secret = localClientConfig.secret || '';
-      const headers = { 'Content-Type': 'application/json' };
-      if (secret) headers['Authorization'] = `Bearer ${secret}`;
-
-      await fetch(`http://${host}:${port}/providers/rules/${providerName}`, {
-        method: 'PUT',
-        headers,
-        signal: AbortSignal.timeout(5000)
-      });
-      refreshedCount++;
-      console.log(`✅ Clash Verge 规则集已刷新: ${providerName}`);
-    } catch (e) {
-      console.log(`❌ Clash Verge 刷新失败:`, e.message);
-    }
-  }
-
-  if (refreshedCount > 0) {
-    console.log(`✅ 共刷新了 ${refreshedCount} 个客户端的规则集`);
-  }
+  await refreshConfiguredRuleProviders(type);
 }
 
 // 清空所有
@@ -283,6 +363,7 @@ document.getElementById('clearAll').addEventListener('click', async () => {
     directRules = 'payload: []';
     proxyRules = 'payload: []';
     await api.saveRules(directRules, proxyRules);
+    await notifyBackupChanged('cloud_rules_cleared');
     await loadRules();
     document.getElementById('yamlCard').style.display = 'none';
     
@@ -297,4 +378,12 @@ document.getElementById('clearAll').addEventListener('click', async () => {
 });
 
 // 初始化
+async function notifyBackupChanged(reason) {
+  try {
+    await chrome.runtime.sendMessage({ type: 'backup-data-changed', reason });
+  } catch (error) {
+    console.log('自动同步未执行:', error.message);
+  }
+}
+
 init();

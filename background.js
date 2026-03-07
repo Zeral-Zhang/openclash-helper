@@ -1,223 +1,283 @@
-chrome.contextMenus.create({
-  id: "addDirect",
-  title: "添加到直连规则",
-  contexts: ["page"]
+importScripts('api.js', 'cloudflare-api.js', 'backup.js');
+
+function extractRootDomain(domain) {
+  const parts = domain.split('.');
+  if (parts.length < 2) {
+    return domain;
+  }
+
+  const secondLevelTLDs = ['co', 'com', 'net', 'org', 'gov', 'edu', 'ac'];
+  if (parts.length >= 3 && secondLevelTLDs.includes(parts[parts.length - 2])) {
+    return parts.slice(-3).join('.');
+  }
+
+  return parts.slice(-2).join('.');
+}
+
+function ensureContextMenus() {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: 'addDirect',
+      title: '添加到直连规则',
+      contexts: ['page']
+    });
+
+    chrome.contextMenus.create({
+      id: 'addProxy',
+      title: '添加到代理规则',
+      contexts: ['page']
+    });
+  });
+}
+
+async function showNotification(message) {
+  try {
+    if (!chrome.notifications) {
+      return;
+    }
+
+    await chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icon.png',
+      title: 'OpenClash 规则助手',
+      message
+    });
+  } catch (error) {
+    console.log('通知发送失败:', error.message);
+  }
+}
+
+
+function parseClashAddress(address) {
+  if (!address) {
+    return null;
+  }
+
+  const value = address.trim();
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      return { host: url.hostname, port: url.port || null };
+    } catch (error) {
+      return null;
+    }
+  }
+
+  const normalized = value.replace(/\/$/, '');
+  const parts = normalized.split(':');
+  if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+    return { host: parts[0], port: parts[1] };
+  }
+
+  return { host: normalized, port: null };
+}
+
+function resolveControllerTarget(targetConfig) {
+  const parsed = parseClashAddress(targetConfig?.host || '');
+  if (!parsed?.host) {
+    return null;
+  }
+
+  return {
+    host: parsed.host,
+    port: parsed.port || targetConfig.port || '9090',
+    secret: targetConfig.secret || ''
+  };
+}
+
+
+function sameControllerTarget(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+
+  return left.host === right.host && String(left.port || '9090') === String(right.port || '9090');
+}
+
+async function getProviderRefreshTargets() {
+  const { config, localClientConfig, syncMode, syncTestState } = await chrome.storage.local.get([
+    'config',
+    'localClientConfig',
+    'syncMode',
+    'syncTestState'
+  ]);
+
+  const mode = syncMode || 'cloudflare';
+  if (mode === 'remote') {
+    const routerTarget = resolveControllerTarget(
+      syncTestState?.remoteRouter?.target || {
+        host: config?.clashHost || config?.host?.split(':')[0],
+        port: config?.clashPort || '9090',
+        secret: config?.clashSecret || ''
+      }
+    );
+
+    return routerTarget ? [{ target: routerTarget, mode: 'remote', label: '路由器' }] : [];
+  }
+
+  const routerReady = Boolean(syncTestState?.cloudRouter?.ready);
+  const externalReady = Boolean(syncTestState?.cloudExternal?.ready);
+  const routerTarget = routerReady ? resolveControllerTarget(syncTestState?.cloudRouter?.target) : null;
+  const externalTarget = resolveControllerTarget(
+    externalReady ? syncTestState?.cloudExternal?.target : localClientConfig
+  );
+
+  const targets = [];
+  if (routerTarget) {
+    targets.push({ target: routerTarget, mode: 'cloudflare', label: '路由器' });
+  }
+
+  if (!routerReady && externalTarget) {
+    targets.push({ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' });
+  } else if (routerReady && externalReady && routerTarget && externalTarget && !sameControllerTarget(routerTarget, externalTarget)) {
+    targets.push({ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' });
+  }
+
+  return targets;
+}
+
+async function refreshConfiguredRuleProviders(type) {
+  const targets = await getProviderRefreshTargets();
+  await Promise.all(targets.map(({ target, mode, label }) =>
+    refreshRuleProviders(target, type, mode).catch(error => {
+      console.log(`刷新${label}规则集失败:`, error.message);
+    })
+  ));
+}
+
+async function refreshRuleProviders(targetConfig, type, mode) {
+  const target = resolveControllerTarget(targetConfig);
+  if (!target) {
+    return;
+  }
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (target.secret) {
+    headers.Authorization = `Bearer ${target.secret}`;
+  }
+
+  const providerName = mode === 'remote'
+    ? (type === 'PROXY' ? 'Rule-provider%20-%20Custom_Proxy' : 'Rule-provider%20-%20Custom_Direct')
+    : (type === 'PROXY' ? 'Rule-provider%20-%20Cloud_Proxy' : 'Rule-provider%20-%20Cloud_Direct');
+
+  const response = await fetch(`http://${target.host}:${target.port}/providers/rules/${providerName}`, {
+    method: 'PUT',
+    headers,
+    signal: AbortSignal.timeout(5000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+}
+
+async function addRuleByMode(domain, type) {
+  const rootDomain = extractRootDomain(domain);
+  const { config, cloudflareConfig, localClientConfig, syncMode } = await chrome.storage.local.get([
+    'config',
+    'cloudflareConfig',
+    'localClientConfig',
+    'syncMode'
+  ]);
+
+  const mode = syncMode || 'cloudflare';
+
+  if (mode === 'remote') {
+    if (!config?.host) {
+      throw new Error('请先配置路由器信息');
+    }
+
+    const remoteApi = new OpenClashAPI(config);
+    await remoteApi.addRule(rootDomain, type, 'DOMAIN-SUFFIX');
+    await refreshConfiguredRuleProviders(type);
+  } else {
+    if (!cloudflareConfig?.workerUrl) {
+      throw new Error('请先配置 Cloudflare Worker');
+    }
+
+    const cloudApi = new CloudflareAPI(cloudflareConfig);
+    await cloudApi.addRule(rootDomain, type, 'DOMAIN-SUFFIX');
+    await refreshConfiguredRuleProviders(type);
+  }
+
+  await OpenClashBackup.markLocalChange('context_menu_add_rule');
+  await OpenClashBackup.autoSyncIfEnabled('context_menu_add_rule').catch(error => {
+    console.log('自动同步失败:', error.message);
+  });
+
+  return rootDomain;
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  ensureContextMenus();
+  OpenClashBackup.configureAutoSyncAlarm().catch(error => {
+    console.log('初始化自动同步失败:', error.message);
+  });
 });
 
-chrome.contextMenus.create({
-  id: "addProxy",
-  title: "添加到代理规则",
-  contexts: ["page"]
+chrome.runtime.onStartup.addListener(() => {
+  OpenClashBackup.configureAutoSyncAlarm().catch(error => {
+    console.log('启动自动同步失败:', error.message);
+  });
+  OpenClashBackup.autoSyncIfEnabled('startup').catch(error => {
+    console.log('启动同步失败:', error.message);
+  });
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local' && changes.webdavConfig) {
+    OpenClashBackup.configureAutoSyncAlarm().catch(error => {
+      console.log('更新自动同步定时器失败:', error.message);
+    });
+  }
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== OpenClashBackup.AUTO_SYNC_ALARM_NAME) {
+    return;
+  }
+
+  OpenClashBackup.autoSyncIfEnabled('alarm').catch(error => {
+    console.log('定时同步失败:', error.message);
+  });
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== 'backup-data-changed') {
+    return false;
+  }
+
+  (async () => {
+    await OpenClashBackup.markLocalChange(message.reason || 'manual_change');
+    const result = await OpenClashBackup.autoSyncIfEnabled(message.reason || 'manual_change').catch(error => ({
+      skipped: false,
+      error: error.message
+    }));
+    sendResponse({ ok: true, result });
+  })().catch((error) => {
+    sendResponse({ ok: false, error: error.message });
+  });
+
+  return true;
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  const domain = new URL(tab.url).hostname;
-  const type = info.menuItemId === "addDirect" ? "DIRECT" : "PROXY";
-  
-  // 提取根域名（后缀匹配）
-  const parts = domain.split('.');
-  let rootDomain = domain;
-  if (parts.length >= 2) {
-    const secondLevelTLDs = ['co', 'com', 'net', 'org', 'gov', 'edu', 'ac'];
-    if (parts.length >= 3 && secondLevelTLDs.includes(parts[parts.length - 2])) {
-      rootDomain = parts.slice(-3).join('.');
-    } else {
-      rootDomain = parts.slice(-2).join('.');
-    }
+  if (!tab?.url || !info.menuItemId) {
+    return;
   }
-  
-  const { config } = await chrome.storage.local.get(['config']);
-  
-  if (config && config.host) {
-    try {
-      const api = new OpenClashAPI(config);
-      await api.addRule(rootDomain, type, 'DOMAIN-SUFFIX');
-      
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icon.png',
-        title: 'OpenClash 规则助手',
-        message: `已添加 ${rootDomain} 到${type === 'PROXY' ? '代理' : '直连'}规则`
-      });
-    } catch (e) {
-      if (e.message === 'RULE_EXISTS') {
-        chrome.notifications.create({
-          type: 'basic',
-          iconUrl: 'icon.png',
-          title: 'OpenClash 规则助手',
-          message: '该规则已存在'
-        });
-      } else {
-        console.error('添加规则失败:', e);
-      }
+
+  try {
+    const domain = new URL(tab.url).hostname;
+    const type = info.menuItemId === 'addDirect' ? 'DIRECT' : 'PROXY';
+    const addedDomain = await addRuleByMode(domain, type);
+    await showNotification(`已添加 ${addedDomain} 到${type === 'PROXY' ? '代理' : '直连'}规则`);
+  } catch (error) {
+    if (error.message === 'RULE_EXISTS') {
+      await showNotification('该规则已存在');
+      return;
     }
+
+    console.error('右键添加规则失败:', error);
+    await showNotification(`添加失败: ${error.message}`);
   }
 });
-
-class OpenClashAPI {
-  constructor(config) {
-    this.config = config;
-    this.token = null;
-    this.useBase64 = null; // null=未检测, true=可用, false=不可用
-  }
-
-  async login() {
-    const response = await fetch(`http://${this.config.host}/cgi-bin/luci/rpc/auth`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: 1,
-        method: 'login',
-        params: [this.config.username, this.config.password]
-      })
-    });
-    const data = await response.json();
-    if (data.error) throw new Error(`登录失败: ${data.error.message}`);
-    this.token = data.result;
-    
-    // 首次登录时检查 Base64 支持
-    if (this.useBase64 === null) {
-      const stored = await chrome.storage.local.get(['useBase64']);
-      this.useBase64 = stored.useBase64 !== false; // 默认 true
-    }
-    
-    return this.token;
-  }
-
-  async readFile(path) {
-    if (!this.token) await this.login();
-    
-    if (this.useBase64) {
-      try {
-        return await this.readFileBase64(path);
-      } catch (e) {
-        if (e.isBase64Error) {
-          console.log('Base64 不可用，降级到 shell 方式');
-          this.useBase64 = false;
-          await chrome.storage.local.set({ useBase64: false });
-          return await this.readFileShell(path);
-        }
-        throw e;
-      }
-    }
-    return await this.readFileShell(path);
-  }
-
-  async readFileBase64(path) {
-    const response = await fetch(`http://${this.config.host}/cgi-bin/luci/rpc/fs?auth=${this.token}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: 1,
-        method: 'readfile',
-        params: [path]
-      })
-    });
-    const data = await response.json();
-    if (data.error) {
-      const error = new Error(data.error.message || '读取文件失败');
-      if (data.error.data && data.error.data.includes('Base64')) {
-        error.isBase64Error = true;
-      }
-      throw error;
-    }
-    return data.result ? atob(data.result) : '';
-  }
-
-  async readFileShell(path) {
-    const response = await fetch(`http://${this.config.host}/cgi-bin/luci/rpc/sys?auth=${this.token}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: 1,
-        method: 'exec',
-        params: [`cat ${path}`]
-      })
-    });
-    const data = await response.json();
-    if (data.error) throw new Error(data.error.message || '读取文件失败');
-    return data.result || '';
-  }
-
-  async writeFile(path, content) {
-    if (!this.token) await this.login();
-    
-    if (this.useBase64) {
-      try {
-        return await this.writeFileBase64(path, content);
-      } catch (e) {
-        if (e.isBase64Error) {
-          console.log('Base64 不可用，降级到 shell 方式');
-          this.useBase64 = false;
-          await chrome.storage.local.set({ useBase64: false });
-          return await this.writeFileShell(path, content);
-        }
-        throw e;
-      }
-    }
-    return await this.writeFileShell(path, content);
-  }
-
-  async writeFileBase64(path, content) {
-    const response = await fetch(`http://${this.config.host}/cgi-bin/luci/rpc/fs?auth=${this.token}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: 1,
-        method: 'writefile',
-        params: [path, btoa(content)]
-      })
-    });
-    const data = await response.json();
-    if (data.error) {
-      const error = new Error(data.error.message || '写入文件失败');
-      if (data.error.data && data.error.data.includes('Base64')) {
-        error.isBase64Error = true;
-      }
-      throw error;
-    }
-    return data.result;
-  }
-
-  async writeFileShell(path, content) {
-    const escapedContent = content.replace(/\\/g, '\\\\').replace(/'/g, "'\\''");
-    const response = await fetch(`http://${this.config.host}/cgi-bin/luci/rpc/sys?auth=${this.token}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: 1,
-        method: 'exec',
-        params: [`printf '%s' '${escapedContent}' > ${path}`]
-      })
-    });
-    const data = await response.json();
-    if (data.error) throw new Error(data.error.message || '写入文件失败');
-    return data.result;
-  }
-
-  async addRule(domain, type, matchType = 'DOMAIN-SUFFIX') {
-    const filePath = type === 'PROXY' ? this.config.proxyFile : this.config.directFile;
-    let content = await this.readFile(filePath);
-    
-    if (!content.includes('payload:')) {
-      content = 'payload:\n';
-    }
-    
-    // 如果是后缀匹配，去除 www 前缀
-    let cleanDomain = domain;
-    if (matchType === 'DOMAIN-SUFFIX' && domain.startsWith('www.')) {
-      cleanDomain = domain.substring(4);
-    }
-    
-    const rule = `  - ${matchType},${cleanDomain}`;
-    
-    // 检查规则是否已存在
-    if (content.includes(rule)) {
-      throw new Error('RULE_EXISTS');
-    }
-    
-    content += `${rule}\n`;
-    await this.writeFile(filePath, content);
-    return true;
-  }
-}
