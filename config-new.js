@@ -303,7 +303,8 @@ function updateWebDAVMeta(backupState = {}) {
     const actionText = actionMap[backupState.lastSyncAction] || '已同步';
     const statusText = backupState.lastSyncStatus === 'error' ? '失败' : '成功';
     const message = backupState.lastSyncMessage ? `，${backupState.lastSyncMessage}` : '';
-    meta.textContent = `上次同步：${backupState.lastSyncedAt}，动作：${actionText}，状态：${statusText}${message}`;
+    const syncTime = backupState.lastSyncedAt ? new Date(backupState.lastSyncedAt).toLocaleString() : backupState.lastSyncedAt;
+    meta.textContent = `上次同步：${syncTime}，动作：${actionText}，状态：${statusText}${message}`;
 
     if (syncBadge) {
       syncBadge.textContent = backupState.lastSyncStatus === 'error' ? '同步失败' : '已同步';

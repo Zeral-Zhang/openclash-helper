@@ -103,10 +103,13 @@ function extractRootDomain(domain) {
   document.getElementById('versionBadge').textContent = `v${chrome.runtime.getManifest().version}`;
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.url) {
+  const isSupportedUrl = tab?.url && /^https?:\/\//i.test(tab.url);
+  if (!isSupportedUrl) {
     document.getElementById('current').textContent = '无法读取当前页面';
-    document.getElementById('currentMeta').textContent = '请切换到普通网页后再使用';
-    renderAccessStatus('warning', '当前页面不支持规则添加');
+    renderAccessStatus('warning', '当前页面不支持规则添加，请切换到普通网页后再使用');
+    document.querySelector('.content').style.display = 'none';
+    document.documentElement.style.minHeight = 'unset';
+    document.body.style.minHeight = 'unset';
     return;
   }
 
@@ -120,12 +123,10 @@ function extractRootDomain(domain) {
 
   document.getElementById('current').textContent = `${currentDomain}${currentPort ? ':' + currentPort : ''}`;
   document.getElementById('currentLabel').textContent = isIP ? '当前 IP' : '当前域名';
-  document.getElementById('currentMeta').textContent = isIP
-    ? `页面类型：IP 地址${currentPort ? ` · 端口：${currentPort}` : ''}`
-    : `页面类型：域名${currentPort ? ` · 端口：${currentPort}` : ' · 默认端口'}`;
 
   renderRuleTypes();
   await checkAccessibility(tab);
+  if (!isIP) checkClashConnection(currentDomain);
 })();
 
 // 智能渲染规则类型
@@ -282,8 +283,47 @@ function showProxyHint(reason) {
   renderAccessStatus('warning', reason, true);
 }
 
+// 查询 Clash 当前连接信息
+async function checkClashConnection(domain) {
+  const clashInfo = document.getElementById('clashInfo');
+  if (!clashInfo) return;
+  clashInfo.textContent = '';
+
+  try {
+    const { config, localClientConfig } = await chrome.storage.local.get(['config', 'localClientConfig']);
+    const target = resolveControllerTarget(localClientConfig?.host ? localClientConfig : config);
+    if (!target) return;
+
+    const headers = {};
+    if (target.secret) headers['Authorization'] = `Bearer ${target.secret}`;
+
+    const resp = await fetch(`http://${target.host}:${target.port}/connections`, {
+      headers,
+      signal: AbortSignal.timeout(3000)
+    });
+    if (!resp.ok) return;
+
+    const data = await resp.json();
+    const conns = (data.connections || []).filter(c =>
+      c.metadata?.host && c.metadata.host.includes(domain)
+    );
+    if (!conns.length) return;
+
+    const conn = conns[conns.length - 1];
+    const rule = conn.rule ? `${conn.rule}${conn.rulePayload ? ',' + conn.rulePayload : ''}` : '—';
+    const chain = conn.chains?.[0] || '—';
+    clashInfo.textContent = `规则：${rule} · 代理组：${chain}`;
+  } catch (e) {
+    // 静默失败
+  }
+}
+
 // 添加规则
 async function addRule(type) {
+  if (!currentDomain) {
+    showStatus('无效页面，无法添加规则', 'error');
+    return;
+  }
   const matchType = document.querySelector('input[name="matchType"]:checked')?.value;
   if (!matchType) {
     showStatus('请选择规则类型', 'error');
@@ -326,6 +366,25 @@ async function addRule(type) {
       }
 
       const api = new CloudflareAPI(cloudflareConfig);
+
+      // 添加前删除对立列表中相同域名的规则
+      const oppositeType = type === 'PROXY' ? 'DIRECT' : 'PROXY';
+      try {
+        const allRules = await api.getAllRules();
+        const lineToRemove = `  - ${matchType},${domainToAdd}`;
+        let changed = false;
+        let directContent = allRules.direct || '';
+        let proxyContent = allRules.proxy || '';
+        if (oppositeType === 'DIRECT') {
+          const updated = directContent.replace(lineToRemove + '\n', '').replace(lineToRemove, '');
+          if (updated !== directContent) { directContent = updated; changed = true; }
+        } else {
+          const updated = proxyContent.replace(lineToRemove + '\n', '').replace(lineToRemove, '');
+          if (updated !== proxyContent) { proxyContent = updated; changed = true; }
+        }
+        if (changed) await api.saveRules(directContent, proxyContent);
+      } catch (_) { /* 静默忽略 */ }
+
       await api.addRule(domainToAdd, type, matchType);
       await refreshConfiguredRuleProviders(type);
     }
