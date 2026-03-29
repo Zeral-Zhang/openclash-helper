@@ -33,6 +33,7 @@ let directRules = '';
 let proxyRules = '';
 let api = null;
 let currentTab = 'all';
+const copyYamlButton = document.getElementById('copyYaml');
 
 // 初始化
 async function init() {
@@ -170,7 +171,7 @@ document.getElementById('refreshRules').addEventListener('click', async () => {
 
 // 导出为文件
 document.getElementById('exportYaml').addEventListener('click', () => {
-  const yaml = `# 代理规则\n${proxyRules}\n\n# 直连规则\n${directRules}`;
+  const yaml = buildYamlPreview();
   const blob = new Blob([yaml], { type: 'text/yaml' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -184,11 +185,26 @@ document.getElementById('exportYaml').addEventListener('click', () => {
 });
 
 // 复制 YAML
-document.getElementById('copyYaml').addEventListener('click', async () => {
-  const yaml = `# 代理规则\n${proxyRules}\n\n# 直连规则\n${directRules}`;
-  await navigator.clipboard.writeText(yaml);
-  showYaml(yaml);
-  showStatus('已复制到剪贴板');
+copyYamlButton.addEventListener('click', async () => {
+  const originalLabel = copyYamlButton.textContent;
+  copyYamlButton.disabled = true;
+  copyYamlButton.textContent = '复制中...';
+
+  try {
+    const yaml = buildYamlPreview();
+    await navigator.clipboard.writeText(yaml);
+    showYaml(yaml);
+    showStatus('已复制到剪贴板');
+    copyYamlButton.textContent = '✅ 已复制';
+  } catch (error) {
+    showStatus(`复制失败: ${error.message || '请检查剪贴板权限'}`, 'error');
+    copyYamlButton.textContent = '复制失败';
+  } finally {
+    setTimeout(() => {
+      copyYamlButton.disabled = false;
+      copyYamlButton.textContent = originalLabel;
+    }, 1800);
+  }
 });
 
 // 显示 YAML
@@ -198,11 +214,26 @@ function showYaml(yaml) {
 }
 
 // 显示状态
-function showStatus(msg) {
+function showStatus(msg, type = 'success') {
   const status = document.getElementById('status');
   status.textContent = msg;
-  status.className = 'status success';
+  status.className = `status ${type}`;
   setTimeout(() => status.className = 'status', 3000);
+}
+
+function buildPayloadYaml(rules) {
+  if (!rules.length) {
+    return 'payload: []';
+  }
+
+  return `payload:\n${rules.map((rule) => `  - ${rule.matchType},${rule.domain}`).join('\n')}`;
+}
+
+function buildYamlPreview() {
+  const allRules = parseRules();
+  const proxy = allRules.filter((rule) => rule.type === 'PROXY');
+  const direct = allRules.filter((rule) => rule.type === 'DIRECT');
+  return `# 代理规则\n${buildPayloadYaml(proxy)}\n\n# 直连规则\n${buildPayloadYaml(direct)}`;
 }
 
 // 显示错误
