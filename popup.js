@@ -318,6 +318,41 @@ async function checkClashConnection(domain) {
   }
 }
 
+// 关闭匹配域名的现有 Clash 连接，强制按新规则重新建连
+async function closeClashConnections(domain) {
+  try {
+    const { config, localClientConfig } = await chrome.storage.local.get(['config', 'localClientConfig']);
+    const target = resolveControllerTarget(localClientConfig?.host ? localClientConfig : config);
+    if (!target) return 0;
+
+    const headers = {};
+    if (target.secret) headers['Authorization'] = `Bearer ${target.secret}`;
+
+    const resp = await fetch(`http://${target.host}:${target.port}/connections`, {
+      headers,
+      signal: AbortSignal.timeout(3000)
+    });
+    if (!resp.ok) return 0;
+
+    const data = await resp.json();
+    const conns = (data.connections || []).filter(c =>
+      c.metadata?.host && c.metadata.host.includes(domain)
+    );
+
+    await Promise.all(conns.map(c =>
+      fetch(`http://${target.host}:${target.port}/connections/${c.id}`, {
+        method: 'DELETE',
+        headers,
+        signal: AbortSignal.timeout(3000)
+      }).catch(() => {})
+    ));
+
+    return conns.length;
+  } catch (e) {
+    return 0; // 静默失败
+  }
+}
+
 // 添加规则
 async function addRule(type) {
   if (!currentDomain) {
@@ -389,6 +424,9 @@ async function addRule(type) {
       await refreshConfiguredRuleProviders(type);
     }
     
+    // 关闭该站点现有连接，强制按新规则重新建连（否则已建立的连接仍走旧代理）
+    await closeClashConnections(currentDomain);
+
     await notifyBackupChanged('popup_add_rule');
     startCountdownRefresh();
 
@@ -455,6 +493,7 @@ function startCountdownRefresh() {
         setTimeout(async () => {
           const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
           await checkAccessibility(tab);
+          if (!isIP) checkClashConnection(currentDomain);
         }, 1000);
       });
     }

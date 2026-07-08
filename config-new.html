@@ -2,6 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
+  <script src="theme-init.js"></script>
   <title>配置</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -136,7 +137,7 @@
       cursor: pointer;
       transition: all 0.2s ease;
     }
-    .nav-item:hover {
+    .nav-item:not(.active):hover {
       background: rgba(28, 48, 88, 0.55);
       color: var(--text);
       border-color: rgba(129, 155, 255, 0.14);
@@ -755,7 +756,7 @@
     :root[data-theme="light"] .page-header { background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(246,249,255,0.98)); }
     :root[data-theme="light"] .sidebar-header,
     :root[data-theme="light"] .sidebar-footer { border-color: rgba(84, 112, 219, 0.12); }
-    :root[data-theme="light"] .nav-item:hover { background: rgba(84, 112, 219, 0.08); }
+    :root[data-theme="light"] .nav-item:not(.active):hover { background: rgba(84, 112, 219, 0.08); }
     :root[data-theme="light"] .nav-item.active { color: #fff; }
     :root[data-theme="light"] label { color: #223457; }
     :root[data-theme="light"] input,

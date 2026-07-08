@@ -6,9 +6,20 @@ function resolveAppTheme(theme) {
   return appThemeQuery.matches ? 'light' : 'dark';
 }
 
+// 把主题偏好镜像到同步的 localStorage，供 theme-init.js 在首屏前读取，避免闪烁
+function mirrorThemePreference(theme) {
+  try {
+    localStorage.setItem(APP_THEME_STORAGE_KEY, theme);
+    localStorage.setItem('popupTheme', theme);
+  } catch (e) {
+    // 忽略 localStorage 不可用的情况
+  }
+}
+
 async function applyStoredAppTheme() {
   const stored = await chrome.storage.local.get([APP_THEME_STORAGE_KEY, 'popupTheme']);
   const theme = stored[APP_THEME_STORAGE_KEY] || stored.popupTheme || 'system';
+  mirrorThemePreference(theme);
   document.documentElement.dataset.theme = resolveAppTheme(theme);
   updateThemeToggleButton(theme);
 }
@@ -67,6 +78,7 @@ async function cycleGlobalTheme() {
   const themeOrder = ['system', 'dark', 'light'];
   const nextTheme = themeOrder[(themeOrder.indexOf(currentTheme) + 1) % themeOrder.length];
   await chrome.storage.local.set({ [APP_THEME_STORAGE_KEY]: nextTheme, popupTheme: nextTheme });
+  mirrorThemePreference(nextTheme);
   document.documentElement.dataset.theme = resolveAppTheme(nextTheme);
   updateThemeToggleButton(nextTheme);
 }
@@ -84,6 +96,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return;
   if (changes[APP_THEME_STORAGE_KEY] || changes.popupTheme) {
     const nextTheme = changes[APP_THEME_STORAGE_KEY]?.newValue || changes.popupTheme?.newValue || 'system';
+    mirrorThemePreference(nextTheme);
     document.documentElement.dataset.theme = resolveAppTheme(nextTheme);
   }
 });
@@ -1524,6 +1537,14 @@ function initSidebarNavigation() {
     .map(item => document.getElementById(item.dataset.target))
     .filter(Boolean);
 
+  const setActive = (targetId) => {
+    navItems.forEach(nav => nav.classList.toggle('active', nav.dataset.target === targetId));
+  };
+
+  // 点击跳转期间暂停滚动监听，避免观察器把高亮改回上一个
+  let clickScrolling = false;
+  let clickScrollTimer = null;
+
   navItems.forEach(item => {
     item.addEventListener('click', () => {
       if (item.dataset.target === 'section-cloud') {
@@ -1545,9 +1566,11 @@ function initSidebarNavigation() {
       const target = document.getElementById(item.dataset.target);
       if (!target) return;
 
-      navItems.forEach(nav => nav.classList.remove('active'));
-      item.classList.add('active');
+      clickScrolling = true;
+      if (clickScrollTimer) clearTimeout(clickScrollTimer);
+      setActive(item.dataset.target);
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      clickScrollTimer = setTimeout(() => { clickScrolling = false; }, 700);
     });
   });
 
@@ -1555,19 +1578,26 @@ function initSidebarNavigation() {
     return;
   }
 
+  // 记录每个 section 的最新可见比例，取全局最大者高亮
+  // （IntersectionObserver 每次只回传发生变化的条目，不能只看本批次）
+  const ratios = new Map();
   const observer = new IntersectionObserver((entries) => {
-    const visibleEntry = entries
-      .filter(entry => entry.isIntersecting)
-      .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-
-    if (!visibleEntry) return;
-
-    navItems.forEach(item => {
-      item.classList.toggle('active', item.dataset.target === visibleEntry.target.id);
+    entries.forEach(entry => {
+      ratios.set(entry.target.id, entry.isIntersecting ? entry.intersectionRatio : 0);
     });
+
+    if (clickScrolling) return;
+
+    let bestId = null;
+    let bestRatio = 0;
+    ratios.forEach((ratio, id) => {
+      if (ratio > bestRatio) { bestRatio = ratio; bestId = id; }
+    });
+
+    if (bestId) setActive(bestId);
   }, {
     rootMargin: '-15% 0px -65% 0px',
-    threshold: [0.2, 0.4, 0.6]
+    threshold: [0, 0.2, 0.4, 0.6]
   });
 
   sections.forEach(section => observer.observe(section));
