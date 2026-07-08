@@ -191,20 +191,106 @@ document.getElementById('copyWorkerCode')?.addEventListener('click', async () =>
 });
 
 // 模式切换
-function updateModeUI(mode) {
-  const showCloud = mode === 'cloudflare';
-  document.getElementById('cloudflareConfig').style.display = showCloud ? 'block' : 'none';
-  document.getElementById('remoteConfig').style.display = showCloud ? 'none' : 'block';
-  document.getElementById('cloudflareSection').style.display = showCloud ? 'block' : 'none';
-  document.getElementById('remoteSection').style.display = showCloud ? 'none' : 'block';
-  document.getElementById('section-cloud').style.display = showCloud ? 'block' : 'none';
-  document.getElementById('section-remote').style.display = showCloud ? 'none' : 'block';
-  document.getElementById('navCloud').style.display = showCloud ? 'flex' : 'none';
-  document.getElementById('navRemote').style.display = showCloud ? 'none' : 'flex';
+function getRuleSourceFromSyncMode(mode) {
+  return mode === 'remote' ? 'openclashLocal' : 'worker';
 }
 
-document.getElementById('syncMode').addEventListener('change', function() {
+function getSyncModeFromRuleSource(ruleSource) {
+  return ruleSource === 'openclashLocal' ? 'remote' : 'cloudflare';
+}
+
+function updateModeUI(mode) {
+  const ruleSource = getRuleSourceFromSyncMode(mode);
+  const ruleSourceSelect = document.getElementById('ruleSource');
+  if (ruleSourceSelect && ruleSourceSelect.value !== ruleSource) {
+    ruleSourceSelect.value = ruleSource;
+  }
+
+  const isLocalRouterMode = ruleSource === 'openclashLocal';
+  const modeBadge = document.getElementById('overviewModeBadge');
+  if (modeBadge) {
+    modeBadge.textContent = isLocalRouterMode ? '高级本地模式' : 'Worker 主路径';
+    modeBadge.className = isLocalRouterMode ? 'status-pill warning' : 'status-pill success';
+  }
+
+  const remoteSection = document.getElementById('remoteSection');
+  if (remoteSection) {
+    remoteSection.style.display = 'block';
+  }
+}
+
+function setRuleSource(ruleSource) {
+  const syncMode = document.getElementById('syncMode');
+  if (!syncMode) return;
+  const nextMode = getSyncModeFromRuleSource(ruleSource);
+  if (syncMode.value !== nextMode) {
+    syncMode.value = nextMode;
+  }
+  updateModeUI(syncMode.value);
+  updateOverviewStatus().catch(() => {});
+}
+
+document.getElementById('syncMode')?.addEventListener('change', function() {
   updateModeUI(this.value);
+  updateOverviewStatus().catch(() => {});
+});
+
+document.getElementById('ruleSource')?.addEventListener('change', function() {
+  setRuleSource(this.value);
+});
+
+
+function normalizeAccessType(value) {
+  return value === 'openClash' || value === 'openclash' ? 'openClash' : 'localClash';
+}
+
+function getCurrentSetupMode() {
+  return normalizeAccessType(document.querySelector('.setup-choice.active')?.dataset.setupMode || 'localClash');
+}
+
+function setSetupMode(mode = 'localClash', options = {}) {
+  const nextMode = normalizeAccessType(mode);
+  const isOpenClash = nextMode === 'openClash';
+
+  document.querySelectorAll('.setup-choice[data-setup-mode]').forEach(button => {
+    button.classList.toggle('active', normalizeAccessType(button.dataset.setupMode) === nextMode);
+  });
+
+  document.querySelectorAll('[data-local-only]').forEach(element => {
+    element.style.display = isOpenClash ? 'none' : '';
+  });
+
+  document.querySelectorAll('[data-openclash-only]').forEach(element => {
+    element.style.display = isOpenClash ? '' : 'none';
+  });
+
+  const badge = document.getElementById('overviewModeBadge');
+  if (badge) {
+    badge.textContent = isOpenClash ? 'OpenClash' : '本地 Clash';
+    badge.className = isOpenClash ? 'status-pill warning' : 'status-pill success';
+  }
+
+  const activeNav = document.querySelector('.nav-item.active');
+  if (activeNav?.dataset.target) {
+    const hiddenByMode = (!isOpenClash && ['section-openclash', 'section-remote'].includes(activeNav.dataset.target)) ||
+      (isOpenClash && activeNav.dataset.target === 'section-cloud');
+    if (hiddenByMode) {
+      activeNav.classList.remove('active');
+      document.querySelector('.nav-item[data-target="section-overview"]')?.classList.add('active');
+    }
+  }
+
+  if (options.persist !== false) {
+    chrome.storage.local.set({ activeAccessType: nextMode }).catch(() => {});
+  }
+
+  const workerUrl = document.getElementById('workerUrl')?.value || '';
+  const proxyGroup = document.getElementById('clashProxyGroupCf')?.value || document.getElementById('cfProxyGroup')?.value || 'Proxy';
+  if (workerUrl) showClashVergeMerge(workerUrl, proxyGroup);
+}
+
+document.querySelectorAll('.setup-choice[data-setup-mode]').forEach(button => {
+  button.addEventListener('click', () => setSetupMode(button.dataset.setupMode));
 });
 
 // 密码显示切换
@@ -225,13 +311,17 @@ document.getElementById('togglePasswordCf')?.addEventListener('click', togglePas
 document.getElementById('toggleApiSecret')?.addEventListener('click', togglePasswordVisibility);
 document.getElementById('toggleSecret')?.addEventListener('click', togglePasswordVisibility);
 document.getElementById('toggleSecretCf')?.addEventListener('click', togglePasswordVisibility);
+document.getElementById('toggleOpenclashControllerSecret')?.addEventListener('click', togglePasswordVisibility);
 document.getElementById('toggleWebdavPassword')?.addEventListener('click', togglePasswordVisibility);
 
 // 加载配置
-chrome.storage.local.get(['config', 'cloudflareConfig', 'syncMode', 'localClientConfig', 'webdavConfig', 'backupState'], (result) => {
-  const syncMode = result.syncMode || 'cloudflare';
+chrome.storage.local.get(['config', 'cloudflareConfig', 'syncMode', 'ruleSource', 'activeAccessType', 'setupTarget', 'enabledDevices', 'localClientConfig', 'webdavConfig', 'backupState', 'syncTestState'], (result) => {
+  const ruleSource = result.ruleSource || getRuleSourceFromSyncMode(result.syncMode || 'cloudflare');
+  const syncMode = getSyncModeFromRuleSource(ruleSource);
   document.getElementById('syncMode').value = syncMode;
+  document.getElementById('ruleSource').value = ruleSource;
   updateModeUI(syncMode);
+  setSetupMode(result.activeAccessType || result.setupTarget || 'localClash', { persist: false });
   
   const config = result.config || {};
   document.getElementById('host').value = config.host || '';
@@ -243,6 +333,10 @@ chrome.storage.local.get(['config', 'cloudflareConfig', 'syncMode', 'localClient
   document.getElementById('clashPort').value = config.clashPort || '9090';
   document.getElementById('clashSecret').value = config.clashSecret || '';
   document.getElementById('clashUI').value = config.clashUI || 'zashboard';
+  document.getElementById('openclashControllerHost').value = config.clashHost || '';
+  document.getElementById('openclashControllerPort').value = config.clashPort || '9090';
+  document.getElementById('openclashControllerSecret').value = config.clashSecret || '';
+  document.getElementById('openclashControllerUI').value = config.clashUI || 'zashboard';
   
   const cloudflareConfig = result.cloudflareConfig || {};
   document.getElementById('workerUrl').value = cloudflareConfig.workerUrl || '';
@@ -267,6 +361,17 @@ chrome.storage.local.get(['config', 'cloudflareConfig', 'syncMode', 'localClient
     select.disabled = false;
   }
 
+  if (config.proxyGroup) {
+    const openclashSelect = document.getElementById('openclashControllerGroup');
+    openclashSelect.innerHTML = `<option value="${config.proxyGroup}">${config.proxyGroup}</option>`;
+    openclashSelect.value = config.proxyGroup;
+    openclashSelect.disabled = false;
+    const cfGroupSelect = document.getElementById('cfProxyGroup');
+    cfGroupSelect.innerHTML = `<option value="${config.proxyGroup}">${config.proxyGroup}</option>`;
+    cfGroupSelect.value = config.proxyGroup;
+    cfGroupSelect.disabled = false;
+  }
+
   // 如果已配置 Cloudflare，显示 Clash Verge 配置
   if (cloudflareConfig.workerUrl) {
     const proxyGroup = localClientConfig.proxyGroup || cloudflareConfig.proxyGroup || 'Proxy';
@@ -281,6 +386,7 @@ chrome.storage.local.get(['config', 'cloudflareConfig', 'syncMode', 'localClient
   document.getElementById('webdavAutoSyncInterval').value = webdavConfig.autoSyncInterval || OpenClashBackup.DEFAULT_AUTO_SYNC_INTERVAL;
 
   updateWebDAVMeta(result.backupState || {});
+  updateOverviewStatus(result).catch(() => {});
 });
 
 function getWebDAVConfigFromForm() {
@@ -352,6 +458,26 @@ function buildBackupStatusMessage(prefix, result) {
   return `${prefix}（${result.warnings.join('；')}）`;
 }
 
+
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+async function updateOverviewStatus(state) {
+  const data = state || await chrome.storage.local.get(['cloudflareConfig', 'config', 'localClientConfig', 'webdavConfig', 'backupState', 'syncTestState', 'ruleSource', 'syncMode']);
+  const ruleSource = data.ruleSource || getRuleSourceFromSyncMode(data.syncMode || 'cloudflare');
+  const workerUrl = data.cloudflareConfig?.workerUrl || document.getElementById('workerUrl')?.value || '';
+  const routerHost = data.config?.host || document.getElementById('hostCf')?.value || document.getElementById('host')?.value || '';
+  const localHost = data.localClientConfig?.host || document.getElementById('clashHostCf')?.value || '';
+  const webdavReady = Boolean(data.webdavConfig?.baseUrl || data.webdavConfig?.fileUrl || document.getElementById('webdavUrl')?.value);
+
+  setText('overviewRuleSource', ruleSource === 'openclashLocal' ? 'OpenClash 本地规则' : (workerUrl ? workerUrl : '未配置 Worker'));
+  setText('overviewOpenClash', data.syncTestState?.cloudRouter?.ready || data.syncTestState?.remoteRouter?.ready ? '已连接' : (routerHost ? '已填写，待测试' : '未接入'));
+  setText('overviewLocalClient', data.syncTestState?.cloudExternal?.ready || data.syncTestState?.remoteExternal?.ready ? '控制已连接' : (localHost ? '已填写，待测试' : '未配置控制')); 
+  setText('overviewWebdav', data.backupState?.lastSyncedAt ? '上次同步 ' + new Date(data.backupState.lastSyncedAt).toLocaleString() : (webdavReady ? '已配置，未同步' : '未配置'));
+}
+
 // 测试 Cloudflare 连接
 document.getElementById('testCloudflare').onclick = async () => {
   let workerUrl = document.getElementById('workerUrl').value.trim();
@@ -381,6 +507,8 @@ document.getElementById('testCloudflare').onclick = async () => {
     
     if (apiResponse.ok) {
       showStatus('statusCloudflare', '✅ 连接成功！', 'success');
+      await chrome.storage.local.set({ ruleSource: 'worker', syncMode: 'cloudflare' });
+      await updateOverviewStatus().catch(() => {});
       const proxyGroup = document.getElementById('cfProxyGroup').value || 'Proxy';
       showClashVergeMerge(workerUrl, proxyGroup);
     } else if (apiResponse.status === 401) {
@@ -395,43 +523,95 @@ document.getElementById('testCloudflare').onclick = async () => {
 
 // 显示 Clash Verge Merge 配置
 function showClashVergeMerge(workerUrl, proxyGroup = 'Proxy') {
-  const merge = `// OpenClash Helper 自定义规则
-// 规则集通用配置
-const ruleProviderCommon = {
-  "type": "http",
-  "format": "yaml",
-  "interval": 3600
-};
+  const safeWorkerUrl = (workerUrl || '').replace(/\/$/, '');
+  const safeProxyGroup = proxyGroup || 'Proxy';
+  const merge = [
+    'const prependRule = [',
+    '];',
+    '',
+    'function main(config) {',
+    '  const selectedProxyGroup = ' + JSON.stringify(safeProxyGroup) + ';',
+    '  const groups = Array.isArray(config["proxy-groups"]) ? config["proxy-groups"] : [];',
+    '  const groupNames = groups.map(group => group && group.name).filter(Boolean);',
+    '  const fallbackGroup = groupNames.find(name => !["DIRECT", "REJECT", "GLOBAL"].includes(name)) || groupNames[0] || "DIRECT";',
+    '  const proxyTarget = groupNames.includes(selectedProxyGroup) ? selectedProxyGroup : fallbackGroup;',
+    '',
+    '  config["rule-providers"] = config["rule-providers"] || {};',
+    '  config["rule-providers"]["OpenClashHelper_Direct"] = {',
+    '    type: "http",',
+    '    behavior: "classical",',
+    '    format: "yaml",',
+    '    url: "' + safeWorkerUrl + '/direct.yaml",',
+    '    path: "./ruleset/openclash-helper-direct.yaml",',
+    '    interval: 3600',
+    '  };',
+    '  config["rule-providers"]["OpenClashHelper_Proxy"] = {',
+    '    type: "http",',
+    '    behavior: "classical",',
+    '    format: "yaml",',
+    '    url: "' + safeWorkerUrl + '/proxy.yaml",',
+    '    path: "./ruleset/openclash-helper-proxy.yaml",',
+    '    interval: 3600',
+    '  };',
+    '',
+    '  config.rules = Array.isArray(config.rules) ? config.rules : [];',
+    '  const helperRules = [',
+    '    "RULE-SET,OpenClashHelper_Direct,DIRECT",',
+    '    "RULE-SET,OpenClashHelper_Proxy," + proxyTarget',
+    '  ];',
+    '  const reservedRules = new Set(prependRule.concat(helperRules));',
+    '  const originalRules = config.rules.filter(rule => !String(rule).includes("OpenClashHelper_") && !reservedRules.has(rule));',
+    '  config.rules = prependRule.concat(helperRules, originalRules);',
+    '  return config;',
+    '}',
+  ].join('\n');
 
-// 程序入口
-function main(config) {
-  // 添加自定义规则集
-  config["rule-providers"] = config["rule-providers"] || {};
-  config["rule-providers"]["Rule-provider - Cloud_Direct"] = {
-    ...ruleProviderCommon,
-    "behavior": "classical",
-    "url": "${workerUrl}/direct.yaml",
-    "path": "./ruleset/cloud-direct.yaml"
-  };
-  config["rule-providers"]["Rule-provider - Cloud_Proxy"] = {
-    ...ruleProviderCommon,
-    "behavior": "classical",
-    "url": "${workerUrl}/proxy.yaml",
-    "path": "./ruleset/cloud-proxy.yaml"
-  };
-
-  // 在规则列表开头添加自定义规则
-  config["rules"] = config["rules"] || [];
-  config["rules"].unshift(
-    "RULE-SET,Rule-provider - Cloud_Direct,DIRECT",
-    "RULE-SET,Rule-provider - Cloud_Proxy,${proxyGroup}"
-  );
-
-  return config;
-}`;
-  
-  document.getElementById('clashVergeMerge').value = merge;
+  const target = document.getElementById('clashVergeMerge');
+  if (target) target.value = merge;
+  updateOpenClashManualConfig(safeWorkerUrl, safeProxyGroup);
 }
+
+function updateOpenClashManualConfig(workerUrl, proxyGroup = 'Proxy') {
+  const target = document.getElementById('openclashManualConfig');
+  if (!target) return;
+  const safeWorkerUrl = (workerUrl || document.getElementById('workerUrl')?.value || '').replace(/\/$/, '');
+  const safeProxyGroup = proxyGroup || document.getElementById('cfProxyGroup')?.value || document.getElementById('clashProxyGroupCf')?.value || 'Proxy';
+  target.value = [
+    'OpenClash 手动配置要点',
+    '',
+    '1. 规则集一：OpenClashHelper_Direct',
+    '   类型: http',
+    '   Behavior: classical',
+    '   Format: yaml',
+    '   URL: ' + safeWorkerUrl + '/direct.yaml',
+    '   Path: ./ruleset/openclash-helper-direct.yaml',
+    '   策略组: DIRECT',
+    '   更新间隔: 3600',
+    '',
+    '2. 规则集二：OpenClashHelper_Proxy',
+    '   类型: http',
+    '   Behavior: classical',
+    '   Format: yaml',
+    '   URL: ' + safeWorkerUrl + '/proxy.yaml',
+    '   Path: ./ruleset/openclash-helper-proxy.yaml',
+    '   策略组: ' + safeProxyGroup,
+    '   更新间隔: 3600',
+    '',
+    '3. 保存并应用配置后，刷新规则集。'
+  ].join('\n');
+}
+
+function refreshGeneratedConfigs() {
+  const workerUrl = document.getElementById('workerUrl')?.value || '';
+  const proxyGroup = document.getElementById('clashProxyGroupCf')?.value || document.getElementById('cfProxyGroup')?.value || 'Proxy';
+  if (workerUrl) showClashVergeMerge(workerUrl, proxyGroup);
+  else updateOpenClashManualConfig('', proxyGroup);
+}
+
+['workerUrl', 'clashProxyGroupCf', 'cfProxyGroup'].forEach(id => {
+  document.getElementById(id)?.addEventListener('change', refreshGeneratedConfigs);
+  document.getElementById(id)?.addEventListener('input', refreshGeneratedConfigs);
+});
 
 // 复制 Clash Verge 配置
 document.getElementById('copyClashVergeMerge').onclick = async () => {
@@ -534,9 +714,9 @@ document.getElementById('testCf').onclick = async () => {
     const controllerFields = await fillRouterControllerFields({
       api,
       routerAddress: host,
-      hostFieldId: 'clashHostCf',
-      portFieldId: 'clashPortCf',
-      secretFieldId: 'clashSecretCf'
+      hostFieldId: 'openclashControllerHost',
+      portFieldId: 'openclashControllerPort',
+      secretFieldId: 'openclashControllerSecret'
     });
 
     const statusParts = ['✅ 连接成功'];
@@ -558,6 +738,8 @@ document.getElementById('testCf').onclick = async () => {
       })
     });
     showStatus('statusCf', statusParts.join('，'), 'success');
+    await chrome.storage.local.set({ ruleSource: 'worker', syncMode: 'cloudflare' });
+    await updateOverviewStatus().catch(() => {});
     saveAllSettings('cloud_router_tested', null).catch(error => {
       console.log('保存云端路由器测试结果失败:', error.message);
     });
@@ -594,22 +776,119 @@ function parseClashAddress(address) {
   };
 }
 
+
+async function testControllerConnection({ hostId, portId, secretId, statusId, stateKey }) {
+  let clashHost = document.getElementById(hostId).value.trim();
+  let clashPort = document.getElementById(portId).value || '9090';
+  let clashSecret = document.getElementById(secretId).value;
+  if (!clashHost) {
+    showStatus(statusId, '请填写控制地址', 'error');
+    return;
+  }
+  const parsed = parseClashAddress(clashHost);
+  if (!parsed) {
+    showStatus(statusId, '地址格式错误', 'error');
+    return;
+  }
+  const host = parsed.host;
+  const port = parsed.port || clashPort;
+  showStatus(statusId, '正在测试控制连接...', 'success');
+  try {
+    const headers = {};
+    if (clashSecret) headers.Authorization = 'Bearer ' + clashSecret;
+    const response = await fetch('http://' + host + ':' + port + '/version', { headers, signal: AbortSignal.timeout(5000) });
+    if (response.status === 401) {
+      await updateSyncTestState({ [stateKey]: { ready: false, target: { host, port, secret: clashSecret || '' }, testedAt: new Date().toISOString() } });
+      showStatus(statusId, '认证失败，Secret 错误', 'error');
+      return;
+    }
+    if (!response.ok) {
+      await updateSyncTestState({ [stateKey]: { ready: false, target: { host, port, secret: clashSecret || '' }, testedAt: new Date().toISOString() } });
+      showStatus(statusId, '连接失败 (HTTP ' + response.status + ')', 'error');
+      return;
+    }
+    const data = await response.json();
+    const versionInfo = data.version || (data.premium ? 'Premium' : 'Unknown');
+    const clientType = data.meta ? 'Mihomo/Clash.Meta' : 'Clash';
+    await updateSyncTestState({ [stateKey]: buildSyncTargetRecord({ host, port, secret: clashSecret || '' }, { clientType }) });
+    showStatus(statusId, '✅ 连接成功！' + clientType + ' 版本: ' + versionInfo, 'success');
+    await updateOverviewStatus().catch(() => {});
+  } catch (e) {
+    await updateSyncTestState({ [stateKey]: { ready: false, target: { host, port, secret: clashSecret || '' }, testedAt: new Date().toISOString() } });
+    showStatus(statusId, e.name === 'TimeoutError' || e.name === 'AbortError' ? '连接超时，请检查地址和端口' : '测试失败: ' + e.message, 'error');
+  }
+}
+
+async function fetchControllerGroups({ hostId, portId, secretId, selectId, statusId, storageKey }) {
+  let clashHost = document.getElementById(hostId).value.trim();
+  let clashPort = document.getElementById(portId).value || '9090';
+  let clashSecret = document.getElementById(secretId).value;
+  if (!clashHost) {
+    showStatus(statusId, '请先填写控制地址', 'error');
+    return;
+  }
+  const parsed = parseClashAddress(clashHost);
+  if (!parsed) {
+    showStatus(statusId, '地址格式错误', 'error');
+    return;
+  }
+  const host = parsed.host;
+  const port = parsed.port || clashPort;
+  showStatus(statusId, '正在获取代理组...', 'success');
+  try {
+    const headers = {};
+    if (clashSecret) headers.Authorization = 'Bearer ' + clashSecret;
+    const response = await fetch('http://' + host + ':' + port + '/proxies', { headers, signal: AbortSignal.timeout(5000) });
+    if (response.status === 401) {
+      showStatus(statusId, '认证失败，请检查 Secret', 'error');
+      return;
+    }
+    if (!response.ok) throw new Error('无法连接 Clash API');
+    const data = await response.json();
+    const groups = Object.entries(data.proxies)
+      .filter(([name, p]) => !['DIRECT', 'REJECT', 'GLOBAL'].includes(name) &&
+        (p.type === 'Selector' || p.type === 'URLTest' || p.type === 'Fallback' || p.type === 'Smart'))
+      .map(([name]) => name);
+    if (groups.length === 0) throw new Error('未找到代理组');
+    const select = document.getElementById(selectId);
+    select.innerHTML = groups.map(g => '<option value="' + g + '">' + g + '</option>').join('');
+    select.disabled = false;
+    const stored = await chrome.storage.local.get([storageKey]);
+    const savedGroup = stored[storageKey]?.proxyGroup;
+    if (savedGroup && groups.includes(savedGroup)) select.value = savedGroup;
+    showStatus(statusId, '✅ 找到 ' + groups.length + ' 个代理组', 'success');
+    refreshGeneratedConfigs();
+  } catch (e) {
+    showStatus(statusId, '获取失败: ' + e.message, 'error');
+  }
+}
+
+document.getElementById('testOpenclashController')?.addEventListener('click', () => testControllerConnection({
+  hostId: 'openclashControllerHost',
+  portId: 'openclashControllerPort',
+  secretId: 'openclashControllerSecret',
+  statusId: 'statusOpenclashController',
+  stateKey: 'cloudRouter'
+}));
+
+document.getElementById('fetchOpenclashControllerGroups')?.addEventListener('click', () => fetchControllerGroups({
+  hostId: 'openclashControllerHost',
+  portId: 'openclashControllerPort',
+  secretId: 'openclashControllerSecret',
+  selectId: 'openclashControllerGroup',
+  statusId: 'statusOpenclashController',
+  storageKey: 'config'
+}));
+
 // 测试 Clash API 连接（云端模式）
 document.getElementById('testClashApiCf').onclick = async () => {
   let clashHost = document.getElementById('clashHostCf').value.trim();
   let clashPort = document.getElementById('clashPortCf').value || '9090';
   let clashSecret = document.getElementById('clashSecretCf').value;
 
-  // 如果没有填写 Clash 地址，尝试使用路由器地址
   if (!clashHost) {
-    const routerHost = document.getElementById('hostCf').value;
-    if (routerHost) {
-      clashHost = routerHost;
-      showStatus('statusClashApiCf', 'ℹ️ 使用路由器地址进行测试...', 'success');
-    } else {
-      showStatus('statusClashApiCf', '请填写 Clash API 地址（如 127.0.0.1 或路由器 IP）', 'error');
-      return;
-    }
+    showStatus('statusClashApiCf', '请填写本地 Clash 控制地址', 'error');
+    return;
   }
 
   // 智能解析地址
@@ -673,6 +952,7 @@ document.getElementById('testClashApiCf').onclick = async () => {
       cloudExternal: buildSyncTargetRecord({ host, port, secret: clashSecret || '' }, { clientType })
     });
     showStatus('statusClashApiCf', `✅ 连接成功！${clientType} 版本: ${versionInfo}`, 'success');
+    await updateOverviewStatus().catch(() => {});
   } catch (e) {
     await updateSyncTestState({
       cloudExternal: {
@@ -830,6 +1110,9 @@ document.getElementById('fetchGroupsCf').onclick = async () => {
     const select = document.getElementById('cfProxyGroup');
     select.innerHTML = groups.map(g => `<option value="${g}">${g}</option>`).join('');
     select.disabled = false;
+    const openclashSelect = document.getElementById('openclashControllerGroup');
+    openclashSelect.innerHTML = select.innerHTML;
+    openclashSelect.disabled = false;
     document.getElementById('autoConfigCf').disabled = false;
     
     // 恢复之前保存的选择
@@ -851,6 +1134,19 @@ document.getElementById('fetchGroupsCf').onclick = async () => {
 };
 
 // 代理组选择变化时更新 Clash Verge 配置
+
+document.getElementById('openclashControllerGroup')?.addEventListener('change', function() {
+  const cfSelect = document.getElementById('cfProxyGroup');
+  if (cfSelect) {
+    if (![...cfSelect.options].some(option => option.value === this.value)) {
+      cfSelect.innerHTML = this.innerHTML;
+    }
+    cfSelect.value = this.value;
+    cfSelect.disabled = false;
+  }
+  refreshGeneratedConfigs();
+});
+
 document.getElementById('cfProxyGroup')?.addEventListener('change', function() {
   const workerUrl = document.getElementById('workerUrl').value;
   if (workerUrl) {
@@ -943,7 +1239,8 @@ document.getElementById('autoConfigCf').onclick = async () => {
       showStatus('statusAutoConfigCf', '✅ UCI 配置已是最新，无需更新', 'success');
       // 仍然保存配置
       const cloudflareConfig = { workerUrl, apiSecret, proxyGroup };
-      await chrome.storage.local.set({ cloudflareConfig, syncMode: 'cloudflare' });
+      await chrome.storage.local.set({ cloudflareConfig, syncMode: 'cloudflare', ruleSource: 'worker', enabledDevices: { openclash: true, clashController: Boolean(document.getElementById('clashHostCf')?.value) } });
+      await updateOverviewStatus().catch(() => {});
       return;
     }
     
@@ -969,7 +1266,8 @@ document.getElementById('autoConfigCf').onclick = async () => {
     
     // 保存配置
     const cloudflareConfig = { workerUrl, apiSecret, proxyGroup };
-    await chrome.storage.local.set({ cloudflareConfig, syncMode: 'cloudflare' });
+    await chrome.storage.local.set({ cloudflareConfig, syncMode: 'cloudflare', ruleSource: 'worker', enabledDevices: { openclash: true, clashController: Boolean(document.getElementById('clashHostCf')?.value) } });
+      await updateOverviewStatus().catch(() => {});
   } catch (e) {
     showStatus('statusAutoConfigCf', '配置失败: ' + e.message, 'error');
   }
@@ -1049,6 +1347,8 @@ document.getElementById('testRemote').onclick = async () => {
       })
     });
     showStatus('statusRemote', statusParts.join('，'), 'success');
+    await chrome.storage.local.set({ ruleSource: 'openclashLocal', syncMode: 'remote' });
+    await updateOverviewStatus().catch(() => {});
     saveAllSettings('remote_tested', null).catch(error => {
       console.log('保存远程测试结果失败:', error.message);
     });
@@ -1137,6 +1437,7 @@ document.getElementById('testClashApi').onclick = async () => {
       remoteExternal: buildSyncTargetRecord({ host, port, secret: clashSecret || '' }, { clientType })
     });
     showStatus('statusClashApi', `✅ 连接成功！${clientType} 版本: ${versionInfo}`, 'success');
+    await updateOverviewStatus().catch(() => {});
   } catch (e) {
     await updateSyncTestState({
       remoteExternal: {
@@ -1322,7 +1623,9 @@ document.getElementById('autoConfigRemote').onclick = async () => {
 };
 
 function collectAllSettings() {
-  const syncMode = document.getElementById('syncMode').value;
+  const ruleSource = document.getElementById('ruleSource')?.value || getRuleSourceFromSyncMode(document.getElementById('syncMode').value);
+  const syncMode = getSyncModeFromRuleSource(ruleSource);
+  document.getElementById('syncMode').value = syncMode;
 
   const config = {
     host: document.getElementById(syncMode === 'remote' ? 'host' : 'hostCf').value,
@@ -1330,17 +1633,17 @@ function collectAllSettings() {
     password: document.getElementById(syncMode === 'remote' ? 'password' : 'passwordCf').value,
     proxyFile: document.getElementById('proxyFile').value,
     directFile: document.getElementById('directFile').value,
-    clashHost: document.getElementById('clashHost').value,
-    clashPort: document.getElementById('clashPort').value || '9090',
-    clashSecret: document.getElementById('clashSecret').value,
-    clashUI: document.getElementById('clashUI').value,
-    proxyGroup: document.getElementById('proxyGroup').value
+    clashHost: document.getElementById('openclashControllerHost').value || document.getElementById('clashHost').value,
+    clashPort: document.getElementById('openclashControllerPort').value || document.getElementById('clashPort').value || '9090',
+    clashSecret: document.getElementById('openclashControllerSecret').value || document.getElementById('clashSecret').value,
+    clashUI: document.getElementById('openclashControllerUI').value || document.getElementById('clashUI').value,
+    proxyGroup: document.getElementById('openclashControllerGroup').value || document.getElementById('cfProxyGroup').value || document.getElementById('proxyGroup').value
   };
 
   const cloudflareConfig = {
     workerUrl: document.getElementById('workerUrl').value,
     apiSecret: document.getElementById('apiSecret').value,
-    proxyGroup: document.getElementById('cfProxyGroup').value || ''
+    proxyGroup: document.getElementById('openclashControllerGroup')?.value || document.getElementById('cfProxyGroup').value || ''
   };
 
   const localClientConfig = {
@@ -1352,8 +1655,12 @@ function collectAllSettings() {
   };
 
   const webdavConfig = getWebDAVConfigFromForm();
+  const enabledDevices = {
+    openclash: Boolean(config.host || document.getElementById('hostCf').value),
+    clashController: Boolean(localClientConfig.host)
+  };
 
-  return { config, cloudflareConfig, localClientConfig, webdavConfig, syncMode };
+  return { config, cloudflareConfig, localClientConfig, webdavConfig, syncMode, ruleSource, enabledDevices };
 }
 
 async function saveAllSettings(reason = 'config_saved', message = '✅ 已自动保存') {
@@ -1366,6 +1673,7 @@ async function saveAllSettings(reason = 'config_saved', message = '✅ 已自动
   if (message) {
     showStatus('statusSave', message, 'success');
   }
+  await updateOverviewStatus(payload).catch(() => {});
 }
 
 let autoSaveTimer = null;
@@ -1547,22 +1855,6 @@ function initSidebarNavigation() {
 
   navItems.forEach(item => {
     item.addEventListener('click', () => {
-      if (item.dataset.target === 'section-cloud') {
-        const syncMode = document.getElementById('syncMode');
-        if (syncMode.value !== 'cloudflare') {
-          syncMode.value = 'cloudflare';
-          syncMode.dispatchEvent(new Event('change'));
-        }
-      }
-
-      if (item.dataset.target === 'section-remote') {
-        const syncMode = document.getElementById('syncMode');
-        if (syncMode.value !== 'remote') {
-          syncMode.value = 'remote';
-          syncMode.dispatchEvent(new Event('change'));
-        }
-      }
-
       const target = document.getElementById(item.dataset.target);
       if (!target) return;
 
@@ -1605,3 +1897,22 @@ function initSidebarNavigation() {
 
 initSidebarNavigation();
 initAutoSave();
+
+
+document.getElementById('openCloudRules')?.addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('cloud-rules.html') });
+});
+
+document.getElementById('openLocalRules')?.addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('rules.html') });
+});
+
+
+document.getElementById('copyOpenClashManualConfig')?.addEventListener('click', async () => {
+  const text = document.getElementById('openclashManualConfig')?.value || '';
+  await navigator.clipboard.writeText(text);
+  const btn = document.getElementById('copyOpenClashManualConfig');
+  const originalText = btn.textContent;
+  btn.textContent = '✅ 已复制';
+  setTimeout(() => { btn.textContent = originalText; }, 2000);
+});

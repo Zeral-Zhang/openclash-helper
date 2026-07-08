@@ -95,11 +95,12 @@ function sameControllerTarget(left, right) {
 }
 
 async function getProviderRefreshTargets() {
-  const { config, localClientConfig, syncMode, syncTestState } = await chrome.storage.local.get([
+  const { config, localClientConfig, syncMode, syncTestState, activeAccessType } = await chrome.storage.local.get([
     'config',
     'localClientConfig',
     'syncMode',
-    'syncTestState'
+    'syncTestState',
+    'activeAccessType'
   ]);
 
   const mode = syncMode || 'cloudflare';
@@ -115,25 +116,27 @@ async function getProviderRefreshTargets() {
     return routerTarget ? [{ target: routerTarget, mode: 'remote', label: '路由器' }] : [];
   }
 
-  const routerReady = Boolean(syncTestState?.cloudRouter?.ready);
-  const externalReady = Boolean(syncTestState?.cloudExternal?.ready);
-  const routerTarget = routerReady ? resolveControllerTarget(syncTestState?.cloudRouter?.target) : null;
+  const activeType = activeAccessType === 'openClash' || activeAccessType === 'openclash'
+    ? 'openClash'
+    : 'localClash';
+
+  if (activeType === 'openClash') {
+    const routerTarget = resolveControllerTarget(
+      syncTestState?.cloudRouter?.ready
+        ? syncTestState.cloudRouter.target
+        : {
+            host: config?.clashHost || config?.host?.split(':')[0],
+            port: config?.clashPort || '9090',
+            secret: config?.clashSecret || ''
+          }
+    );
+    return routerTarget ? [{ target: routerTarget, mode: 'cloudflare', label: 'OpenClash' }] : [];
+  }
+
   const externalTarget = resolveControllerTarget(
-    externalReady ? syncTestState?.cloudExternal?.target : localClientConfig
+    syncTestState?.cloudExternal?.ready ? syncTestState.cloudExternal.target : localClientConfig
   );
-
-  const targets = [];
-  if (routerTarget) {
-    targets.push({ target: routerTarget, mode: 'cloudflare', label: '路由器' });
-  }
-
-  if (!routerReady && externalTarget) {
-    targets.push({ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' });
-  } else if (routerReady && externalReady && routerTarget && externalTarget && !sameControllerTarget(routerTarget, externalTarget)) {
-    targets.push({ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' });
-  }
-
-  return targets;
+  return externalTarget ? [{ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' }] : [];
 }
 
 async function refreshConfiguredRuleProviders(type) {

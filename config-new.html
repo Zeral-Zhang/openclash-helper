@@ -692,6 +692,15 @@
       word-break: break-all;
       border: 1px solid rgba(129, 155, 255, 0.14);
     }
+    .modal { background: var(--panel) !important; color: var(--text); }
+    .modal h2 { color: var(--text); }
+    .modal-close { background: var(--panel-strong) !important; border-color: var(--border) !important; color: var(--text) !important; }
+    .step { background: var(--panel-strong) !important; border-color: var(--border) !important; }
+    .step-title { color: var(--text) !important; }
+    .step-content { color: var(--text-soft) !important; }
+    .code-block { background: var(--bg-soft) !important; color: var(--text) !important; border-color: var(--border) !important; }
+    :root[data-theme="light"] .modal-overlay { background: rgba(18, 33, 63, 0.28); }
+
     @media (max-width: 1080px) {
       .app-shell {
         grid-template-columns: 1fr;
@@ -777,6 +786,28 @@
       color: #33476f;
     }
 
+    .status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .status-tile, .path-card, .device-note { border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong); padding: 14px; }
+    .status-label { color: var(--text-dim); font-size: 12px; margin-bottom: 6px; }
+    .status-value { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+    .path-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .path-title { font-weight: 750; margin-bottom: 10px; }
+    .step-list { display: grid; gap: 8px; color: var(--text-soft); font-size: 13px; line-height: 1.45; }
+    .step-line { display: flex; gap: 8px; align-items: flex-start; }
+    .step-index { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; background: var(--primary); color: #fff; font-size: 11px; font-weight: 800; }
+    .device-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .mode-note { border: 1px solid var(--border); border-radius: 8px; background: rgba(34, 197, 94, 0.08); padding: 12px; color: var(--text-soft); line-height: 1.55; font-size: 13px; margin-bottom: 16px; }
+    @media (max-width: 980px) { .status-grid, .path-grid, .device-grid { grid-template-columns: 1fr; } }
+
+    .setup-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .setup-choice { border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong); color: var(--text); padding: 16px; text-align: left; cursor: pointer; display: grid; gap: 7px; min-height: 132px; }
+    .setup-choice:hover { background: var(--panel-hover); }
+    .setup-choice.active { border-color: color-mix(in srgb, var(--primary) 70%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent); }
+    .choice-kicker { color: var(--primary); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0; }
+    .choice-title { font-size: 17px; font-weight: 780; }
+    .choice-desc { color: var(--text-soft); font-size: 13px; line-height: 1.5; }
+    @media (max-width: 980px) { .setup-choice-grid { grid-template-columns: 1fr; } }
+
   </style>
 </head>
 <body>
@@ -784,15 +815,18 @@
     <aside class="sidebar">
       <div class="sidebar-header">
         <div class="sidebar-brand">OpenClash 助手</div>
-        <div class="sidebar-subtitle">集中管理同步模式、Cloudflare、路由器、导入导出与 WebDAV 备份</div>
+        <div class="sidebar-subtitle">Worker 分发规则，本地 Clash 与 OpenClash 按模式接入</div>
       </div>
-      <div class="sidebar-label">设置选项</div>
+      <div class="sidebar-label">设置中心</div>
       <nav class="nav-menu">
-        <button class="nav-item active" data-target="section-mode"><span class="nav-icon">⚙️</span><span>同步模式</span></button>
-        <button class="nav-item" id="navCloud" data-target="section-cloud"><span class="nav-icon">☁️</span><span>云端同步</span></button>
-        <button class="nav-item" id="navRemote" data-target="section-remote"><span class="nav-icon">🛜</span><span>路由器同步</span></button>
-        <button class="nav-item" data-target="section-backup"><span class="nav-icon">⇆</span><span>导入导出</span></button>
-        <button class="nav-item" data-target="section-webdav"><span class="nav-icon">🔄</span><span>WebDAV</span></button>
+        <button class="nav-item active" data-target="section-overview"><span class="nav-icon">01</span><span>当前激活</span></button>
+        <button class="nav-item" data-target="section-mode"><span class="nav-icon">02</span><span>Worker</span></button>
+        <button class="nav-item" id="navCloud" data-target="section-devices"><span class="nav-icon">03</span><span>远程控制</span></button>
+        <button class="nav-item" id="navRemote" data-openclash-only data-target="section-openclash" style="display:none;"><span class="nav-icon">04</span><span>OpenClash</span></button>
+        <button class="nav-item" data-local-only data-target="section-cloud"><span class="nav-icon">04</span><span>本地脚本</span></button>
+        <button class="nav-item" data-target="section-rules"><span class="nav-icon">05</span><span>规则</span></button>
+        <button class="nav-item" data-target="section-backup"><span class="nav-icon">06</span><span>备份</span></button>
+        <button class="nav-item" data-openclash-only data-target="section-remote" style="display:none;"><span class="nav-icon">07</span><span>高级</span></button>
       </nav>
     </aside>
 
@@ -800,7 +834,7 @@
       <div class="page-header">
         <div>
           <div class="page-title">设置中心</div>
-          <div class="page-subtitle">参考你给的界面风格，调整为左侧菜单、右侧分区内容。现有功能入口、表单 id 与脚本行为保持兼容。</div>
+          <div class="page-subtitle">先选择接入模式，再按当前模式完成远程控制、代理组和规则集配置。</div>
         </div>
         <div class="save-bar">
           <button class="theme-icon-btn" id="globalThemeToggle" type="button" aria-label="主题：跟随系统" title="主题：跟随系统"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18"/><path d="M12 5a7 7 0 1 0 0 14Z"/></svg></button>
@@ -809,273 +843,259 @@
       </div>
 
       <div class="content-stack">
-        <section class="section-card" id="section-mode">
+        <section class="section-card" id="section-overview">
           <div class="section-head">
-            <div class="section-kicker">Sync Mode</div>
-            <h2>同步模式</h2>
-            <p class="subtitle">选择当前规则同步方案。云端同步适合多设备场景；路由器同步适合仅管理路由器本地规则。</p>
+            <div>
+              <div class="section-kicker">Setup Flow</div>
+              <h2>当前激活接入方式</h2>
+              <p class="subtitle">两套配置都会保存和同步；这里只决定本机默认控制、刷新和打开面板的目标。</p>
+            </div>
+            <span class="status-pill success" id="overviewModeBadge">本地 Clash</span>
           </div>
-
-          <div class="form-group">
-            <label>同步模式</label>
-            <select id="syncMode">
-              <option value="cloudflare">云端同步（推荐 - 支持多设备）</option>
-              <option value="remote">路由器同步（仅路由器）</option>
-            </select>
-            <div class="hint">云端同步支持家里 OpenClash + 公司 Clash Verge</div>
+          <div class="setup-choice-grid">
+            <button class="setup-choice active" type="button" data-setup-mode="localClash">
+              <span class="choice-kicker">Recommended</span>
+              <span class="choice-title">本地 Clash</span>
+              <span class="choice-desc">公司电脑等本地客户端：默认刷新本地 controller，并使用本地代理组生成脚本。</span>
+            </button>
+            <button class="setup-choice" type="button" data-setup-mode="openClash">
+              <span class="choice-kicker">Router</span>
+              <span class="choice-title">OpenClash</span>
+              <span class="choice-desc">家里路由器：默认刷新 OpenClash controller，并使用 OpenClash 代理组配置规则。</span>
+            </button>
           </div>
-
         </section>
 
-        <section class="section-card" id="section-cloud">
+        <section class="section-card" id="section-mode">
+          <div class="section-head">
+            <div>
+              <div class="section-kicker">Source</div>
+              <h2>1. 配置 Worker 规则源</h2>
+              <p class="subtitle">所有设备共用这一份规则。</p>
+            </div>
+            <a href="#" id="showTutorial">查看部署教程</a>
+          </div>
+          <div class="form-group">
+            <label>规则工作模式</label>
+            <select id="ruleSource">
+              <option value="worker">Worker 云端规则源（推荐，多设备共用）</option>
+              <option value="openclashLocal">OpenClash 本地规则文件（高级，单路由器）</option>
+            </select>
+            <select id="syncMode" style="display:none;">
+              <option value="cloudflare">Worker 云端规则源</option>
+              <option value="remote">OpenClash 本地规则文件</option>
+            </select>
+          </div>
           <div id="cloudflareSection">
             <div id="cloudflareConfig">
-              <div class="section-head">
-                <div class="section-kicker">Cloudflare</div>
-                <h2>Cloudflare Worker 配置</h2>
-                <p class="subtitle"><a href="#" id="showTutorial">📖 查看部署教程</a></p>
-              </div>
-
-              <div class="form-group">
-                <label>Worker URL</label>
-                <input type="text" id="workerUrl" placeholder="https://your-worker.workers.dev">
-                <div class="hint">Cloudflare Worker 的完整 URL</div>
-              </div>
-
-              <div class="form-group">
-                <label>API Secret</label>
-                <div class="password-wrapper">
-                  <input type="password" id="apiSecret" placeholder="输入 API 密钥">
-                  <button type="button" class="password-toggle" id="toggleApiSecret">👁️</button>
+              <div class="two-col">
+                <div class="form-group">
+                  <label>Worker URL</label>
+                  <input type="text" id="workerUrl" placeholder="https://your-worker.workers.dev">
+                  <div class="hint">Clash 通过这个地址读取 <code>/direct.yaml</code> 和 <code>/proxy.yaml</code>。</div>
                 </div>
-                <div class="hint">Worker 中设置的 API_SECRET 环境变量</div>
+                <div class="form-group">
+                  <label>API Secret</label>
+                  <div class="password-wrapper">
+                    <input type="password" id="apiSecret" placeholder="输入 API 密钥">
+                    <button type="button" class="password-toggle" id="toggleApiSecret">👁️</button>
+                  </div>
+                  <div class="hint">只用于插件写入和管理 Worker KV。</div>
+                </div>
               </div>
-
               <div class="btn-group">
-                <button class="btn-secondary" id="testCloudflare">测试连接</button>
+                <button class="btn-primary" id="testCloudflare">测试 Worker</button>
               </div>
               <div id="statusCloudflare" class="status"></div>
+            </div>
+          </div>
+        </section>
 
-              <div class="subsection">
-                <h3>OpenClash 自动配置（可选）</h3>
-                <p class="subtitle">填写路由器信息后可一键配置 UCI</p>
+        <section class="section-card" id="section-devices" data-local-only>
+          <div class="section-head">
+            <div>
+              <div class="section-kicker">Controller</div>
+              <h2>本地 Clash 远程控制</h2>
+              <p class="subtitle">填写本机 Clash Verge 等客户端的 external controller。</p>
+            </div>
+          </div>
+          <div class="mode-note">先在本地客户端开启远程控制并设置 Secret。</div>
+          <div class="two-col">
+            <div class="form-group">
+              <label>控制地址</label>
+              <input type="text" id="clashHostCf" placeholder="127.0.0.1 或 192.168.1.1 或 http://example.com">
+              <div class="hint">本地 Clash 通常填 127.0.0.1。</div>
+            </div>
+            <div class="form-group">
+              <label>控制端口</label>
+              <input type="number" id="clashPortCf" placeholder="9090" value="9090">
+              <div class="hint">常见端口是 9090。</div>
+            </div>
+          </div>
+          <div class="two-col">
+            <div class="form-group">
+              <label>Secret（远程控制密码）</label>
+              <div class="password-wrapper">
+                <input type="password" id="clashSecretCf" placeholder="Clash external controller Secret">
+                <button type="button" class="password-toggle" id="toggleSecretCf">👁️</button>
               </div>
+              <div class="hint">本地客户端需手动设置。</div>
+            </div>
+            <div class="form-group">
+              <label>控制面板 UI</label>
+              <select id="clashUICf">
+                <option value="zashboard">Zashboard（推荐）</option>
+                <option value="dashboard">MetaCubeXD</option>
+                <option value="yacd">Yacd</option>
+                <option value="razord">Razord</option>
+              </select>
+              <div class="hint">用于生成控制面板访问地址。</div>
+            </div>
+          </div>
+          <div class="btn-group">
+            <button class="btn-secondary" id="testClashApiCf">测试控制连接</button>
+            <button class="btn-secondary" id="fetchClashGroupsCf">获取代理组</button>
+          </div>
+          <div id="statusClashApiCf" class="status"></div>
+          <div class="form-group" style="margin-top: 16px;">
+            <label>代理组</label>
+            <select id="clashProxyGroupCf" disabled>
+              <option value="">请先获取代理组列表</option>
+            </select>
+            <div class="hint">脚本会优先使用选中的代理组；如果配置中不存在该代理组，会自动回退到可用代理组，不会报错。</div>
+          </div>
+        </section>
 
+        <section class="section-card" id="section-cloud" data-local-only>
+          <div class="section-head">
+            <div>
+              <div class="section-kicker">Local Client</div>
+              <h2>3. 生成本地 Clash Merge 脚本</h2>
+              <p class="subtitle">复制到 Clash Verge 全局扩展配置。</p>
+            </div>
+          </div>
+          <div class="mode-note">在 Clash Verge 启用全局扩展配置，粘贴后保存并刷新规则。</div>
+          <textarea id="clashVergeMerge" readonly class="mono-textarea"></textarea>
+          <div class="section-actions">
+            <button class="btn-secondary" id="copyClashVergeMerge">复制 Merge 脚本</button>
+          </div>
+        </section>
+
+        <section class="section-card" id="section-openclash" data-openclash-only style="display:none;">
+          <div class="section-head">
+            <div>
+              <div class="section-kicker">OpenClash</div>
+              <h2>OpenClash 配置</h2>
+              <p class="subtitle">自动写入，或按右侧内容手动配置。</p>
+            </div>
+          </div>
+          <div class="mode-note">OpenClash 的远程控制独立保存。可以手动填写，也可以用下面的路由器账号自动读取。</div>
+          <div class="two-col">
+            <div class="form-group">
+              <label>OpenClash 控制地址</label>
+              <input type="text" id="openclashControllerHost" placeholder="192.168.1.1 或 http://192.168.1.1">
+            </div>
+            <div class="form-group">
+              <label>控制端口</label>
+              <input type="number" id="openclashControllerPort" placeholder="9090" value="9090">
+            </div>
+          </div>
+          <div class="two-col">
+            <div class="form-group">
+              <label>Secret（远程控制密码）</label>
+              <div class="password-wrapper">
+                <input type="password" id="openclashControllerSecret" placeholder="OpenClash external controller Secret">
+                <button type="button" class="password-toggle" id="toggleOpenclashControllerSecret">👁️</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>控制面板 UI</label>
+              <select id="openclashControllerUI">
+                <option value="zashboard">Zashboard（推荐）</option>
+                <option value="dashboard">MetaCubeXD</option>
+                <option value="yacd">Yacd</option>
+                <option value="razord">Razord</option>
+              </select>
+            </div>
+          </div>
+          <div class="btn-group">
+            <button class="btn-secondary" id="testOpenclashController">测试 OpenClash 控制</button>
+            <button class="btn-secondary" id="fetchOpenclashControllerGroups">获取 OpenClash 代理组</button>
+          </div>
+          <div id="statusOpenclashController" class="status"></div>
+          <div class="form-group" style="margin-top: 16px;">
+            <label>OpenClash 代理组</label>
+            <select id="openclashControllerGroup" disabled>
+              <option value="">请先获取代理组列表</option>
+            </select>
+          </div>
+
+          <div class="device-grid">
+            <div class="path-card">
+              <div class="path-title">自动配置 OpenClash</div>
+              <div class="mode-note">需要路由器 LuCI 账号密码。</div>
               <div class="form-group">
                 <label>路由器地址</label>
                 <input type="text" id="hostCf" placeholder="192.168.1.1">
               </div>
-
               <div class="two-col">
                 <div class="form-group">
-                  <label>用户名</label>
+                  <label>路由器用户名</label>
                   <input type="text" id="usernameCf" placeholder="root" value="root">
                 </div>
                 <div class="form-group">
-                  <label>密码</label>
+                  <label>路由器密码</label>
                   <div class="password-wrapper">
                     <input type="password" id="passwordCf" placeholder="路由器密码">
                     <button type="button" class="password-toggle" id="togglePasswordCf">👁️</button>
                   </div>
                 </div>
               </div>
-
               <div class="btn-group">
-                <button class="btn-secondary" id="testCf">测试连接</button>
-                <button class="btn-secondary" id="fetchGroupsCf">获取代理组</button>
+                <button class="btn-secondary" id="testCf">测试路由器并读取控制信息</button>
+                <button class="btn-secondary" id="fetchGroupsCf">获取 OpenClash 代理组</button>
               </div>
               <div id="statusCf" class="status"></div>
-
               <div class="form-group" style="margin-top: 16px;">
-                <label>代理组</label>
+                <label>OpenClash 代理组</label>
                 <select id="cfProxyGroup" disabled>
                   <option value="">请先获取代理组列表</option>
                 </select>
-                <div class="hint">选择规则匹配后使用的代理组</div>
               </div>
-
-              <button class="btn-primary full-width" id="autoConfigCf" disabled>自动配置 UCI</button>
+              <button class="btn-primary full-width" id="autoConfigCf" disabled>自动写入 Worker 规则源</button>
               <div id="statusAutoConfigCf" class="status"></div>
-
-              <div class="subsection">
-                <h3>Clash 外部控制</h3>
-              </div>
-
-              <div class="form-group">
-                <label>Clash API 地址</label>
-                <input type="text" id="clashHostCf" placeholder="127.0.0.1 或 192.168.1.1 或 http://example.com">
-                <div class="hint">Clash 外部控制地址（本地 Clash Verge 填 127.0.0.1，远程 OpenClash 填路由器 IP）</div>
-              </div>
-
-              <div class="two-col">
-                <div class="form-group">
-                  <label>外部控制端口</label>
-                  <input type="number" id="clashPortCf" placeholder="9090" value="9090">
-                  <div class="hint">Clash 外部控制端口，默认 9090</div>
-                </div>
-                <div class="form-group">
-                  <label>控制面板 UI</label>
-                  <select id="clashUICf">
-                    <option value="zashboard">Zashboard（推荐）</option>
-                    <option value="dashboard">MetaCubeXD</option>
-                    <option value="yacd">Yacd</option>
-                    <option value="razord">Razord</option>
-                  </select>
-                  <div class="hint">仅用于 OpenClash 控制面板访问</div>
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label>Secret（密钥）</label>
-                <div class="password-wrapper">
-                  <input type="password" id="clashSecretCf" placeholder="填写 Clash 外部控制密钥">
-                  <button type="button" class="password-toggle" id="toggleSecretCf">👁️</button>
-                </div>
-                <div class="hint">Clash Verge: 设置 → 外部控制 → Secret；OpenClash: 上方自动获取</div>
-              </div>
-
-              <div class="btn-group">
-                <button class="btn-secondary" id="testClashApiCf">测试 Clash API 连接</button>
-                <button class="btn-secondary" id="fetchClashGroupsCf">获取代理组</button>
-              </div>
-              <div id="statusClashApiCf" class="status"></div>
-
-              <div class="form-group" style="margin-top: 16px;">
-                <label>代理组</label>
-                <select id="clashProxyGroupCf" disabled>
-                  <option value="">请先获取代理组列表</option>
-                </select>
-                <div class="hint">选择规则匹配后使用的代理组</div>
-              </div>
-
-              <div class="subsection">
-                <h3>Clash Verge 配置</h3>
-                <div class="hint" style="margin-bottom: 12px;">复制以下配置到 Clash Verge → 配置 → 全局扩展配置</div>
-                <textarea id="clashVergeMerge" readonly class="mono-textarea"></textarea>
-                <div class="section-actions">
-                  <button class="btn-secondary" id="copyClashVergeMerge">复制配置</button>
-                </div>
+            </div>
+            <div class="path-card">
+              <div class="path-title">手动配置指引</div>
+              <div class="mode-note">不提供路由器账号密码时，按下面内容手动添加。</div>
+              <textarea id="openclashManualConfig" readonly class="mono-textarea"></textarea>
+              <div class="section-actions">
+                <button class="btn-secondary" type="button" id="copyOpenClashManualConfig">复制手动配置</button>
               </div>
             </div>
           </div>
         </section>
 
-        <section class="section-card" id="section-remote">
-          <div id="remoteSection" style="display:none;">
-            <div id="remoteConfig">
-              <div class="section-head">
-                <div class="section-kicker">Remote Router</div>
-                <h2>路由器同步</h2>
-                <p class="subtitle">直接通过路由器 LuCI API 管理本地规则文件。</p>
-              </div>
-
-              <div class="form-group">
-                <label>路由器地址</label>
-                <input type="text" id="host" placeholder="192.168.1.1 或 192.168.1.1:8080">
-                <div class="hint">支持 IP:端口 格式</div>
-              </div>
-
-              <div class="two-col">
-                <div class="form-group">
-                  <label>用户名</label>
-                  <input type="text" id="username" placeholder="root" value="root">
-                </div>
-                <div class="form-group">
-                  <label>密码</label>
-                  <div class="password-wrapper">
-                    <input type="password" id="password" placeholder="路由器密码">
-                    <button type="button" class="password-toggle" id="togglePassword">👁️</button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="two-col">
-                <div class="form-group">
-                  <label>代理规则文件路径</label>
-                  <input type="text" id="proxyFile" placeholder="/etc/openclash/rule_provider/Custom_Proxy.yaml">
-                </div>
-                <div class="form-group">
-                  <label>直连规则文件路径</label>
-                  <input type="text" id="directFile" placeholder="/etc/openclash/rule_provider/Custom_Direct.yaml">
-                </div>
-              </div>
-
-              <div class="btn-group">
-                <button class="btn-secondary" id="testRemote">测试连接</button>
-              </div>
-              <div id="statusRemote" class="status"></div>
-
-              <div class="subsection">
-                <h3>Clash 外部控制</h3>
-              </div>
-
-              <div class="form-group">
-                <label>Clash API 地址</label>
-                <input type="text" id="clashHost" placeholder="127.0.0.1 或 192.168.1.1 或 http://example.com">
-                <div class="hint">Clash 外部控制地址（本地 Clash Verge 填 127.0.0.1，远程 OpenClash 填路由器 IP）</div>
-              </div>
-
-              <div class="two-col">
-                <div class="form-group">
-                  <label>外部控制端口</label>
-                  <input type="number" id="clashPort" placeholder="9090" value="9090">
-                  <div class="hint">Clash 外部控制端口，默认 9090</div>
-                </div>
-                <div class="form-group">
-                  <label>控制面板 UI</label>
-                  <select id="clashUI">
-                    <option value="zashboard">Zashboard（推荐）</option>
-                    <option value="dashboard">MetaCubeXD</option>
-                    <option value="yacd">Yacd</option>
-                    <option value="razord">Razord</option>
-                  </select>
-                  <div class="hint">仅用于 OpenClash 控制面板访问</div>
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label>Secret（密钥）</label>
-                <div class="password-wrapper">
-                  <input type="password" id="clashSecret" placeholder="填写 Clash 外部控制密钥">
-                  <button type="button" class="password-toggle" id="toggleSecret">👁️</button>
-                </div>
-                <div class="hint">Clash Verge: 设置 → 外部控制 → Secret；OpenClash: 上方自动获取</div>
-              </div>
-
-              <div class="btn-group">
-                <button class="btn-secondary" id="testClashApi">测试 Clash API 连接</button>
-              </div>
-              <div id="statusClashApi" class="status"></div>
-
-              <div class="subsection">
-                <h3>自动配置 OpenClash</h3>
-                <p class="subtitle">自动配置 UCI 规则提供者，需要先测试连接成功。</p>
-              </div>
-
-              <div class="form-group">
-                <label>代理组</label>
-                <select id="proxyGroup" disabled>
-                  <option value="">请先获取代理组列表</option>
-                </select>
-                <div class="hint">选择规则匹配后使用的代理组</div>
-              </div>
-
-              <div class="btn-group">
-                <button class="btn-secondary" id="fetchGroups">获取代理组</button>
-                <button class="btn-primary" id="autoConfigRemote" disabled>自动配置 UCI</button>
-              </div>
-              <div id="statusAutoConfig" class="status"></div>
+        <section class="section-card" id="section-rules">
+          <div class="section-head">
+            <div>
+              <div class="section-kicker">Rules</div>
+              <h2>规则管理</h2>
+              <p class="subtitle">规则写入 Worker，刷新 rule-provider 后生效。</p>
             </div>
+          </div>
+          <div class="btn-group">
+            <button class="btn-primary" type="button" id="openCloudRules">打开规则管理</button>
+            <button class="btn-secondary" type="button" id="openLocalRules">本地规则编辑</button>
           </div>
         </section>
 
         <section class="section-card" id="section-backup">
           <div class="section-head">
-            <div class="section-kicker">Import / Export</div>
-            <h2>导入 / 导出</h2>
-            <p class="subtitle">导出完整配置与规则快照，导入时会覆盖当前本地配置，并尽量恢复对应规则。</p>
+            <div class="section-kicker">Backup</div>
+            <h2>完整备份</h2>
+            <p class="subtitle">导出插件配置、Worker 配置、规则快照和设备接入信息；导入会覆盖当前本地配置。</p>
           </div>
-
           <div class="two-col">
             <div class="subsection" style="margin-top: 0;">
               <h3>导出完整数据</h3>
@@ -1089,90 +1109,58 @@
               <input type="file" id="backupFileInput" accept="application/json,.json" style="display:none;">
             </div>
           </div>
-          <div class="hint" style="margin-top: 16px;">备份文件包含路由器密码、Cloudflare API Secret、Clash Secret、WebDAV 凭据等敏感信息，请妥善保管。</div>
+          <div class="hint" style="margin-top: 16px;">备份文件包含路由器密码、Worker API Secret、Clash Secret、WebDAV 凭据等敏感信息，请妥善保管。</div>
           <div id="statusBackup" class="status"></div>
         </section>
 
         <section class="section-card" id="section-webdav">
           <div class="section-head">
             <div class="section-kicker">WebDAV Sync</div>
-            <h2>WebDAV 备份与同步</h2>
-            <p class="subtitle">按参考布局拆分为两块：上方负责连接、上传和恢复；下方负责自动同步设置与立即同步。</p>
+            <h2>WebDAV 备份与自动同步</h2>
+            <p class="subtitle">同步配置、规则快照和设备信息。</p>
           </div>
-
           <div class="webdav-stack">
             <div class="inner-card">
               <div class="card-header-row">
                 <div>
                   <div class="card-title">WebDAV 备份与恢复</div>
-                  <div class="card-desc">只填写 WebDAV 目录地址，程序会自动在其下维护 open-clash-helper 目录和备份 JSON</div>
+                  <div class="card-desc">插件会自动维护 open-clash-helper/open-clash-helper-backup.json。</div>
                 </div>
                 <div class="status-pill warning" id="webdavSyncBadge">未同步</div>
               </div>
-
-              <div class="info-box">输入 WebDAV 目录后，插件会自动检测其下是否存在 `open-clash-helper` 子目录；如果没有，会在首次上传或测试连接时自动创建，并在其中维护 `open-clash-helper-backup.json`。</div>
-
-              <div class="form-group">
+              <div class="form-group" style="margin-top: 16px;">
                 <label>WebDAV 目录地址</label>
-                <input type="text" id="webdavUrl" placeholder="https://dav.example.com/remote.php/dav/files/username">
-                <div class="hint">只需填写 WebDAV 目录地址，插件会自动在其下创建 `open-clash-helper/open-clash-helper-backup.json`</div>
+                <input type="text" id="webdavUrl" placeholder="https://dav.example.com/dav/files/username">
               </div>
-
               <div class="two-col">
-                <div class="form-group">
-                  <label>用户名</label>
-                  <input type="text" id="webdavUsername" placeholder="WebDAV 用户名">
-                </div>
-                <div class="form-group">
-                  <label>密码</label>
-                  <div class="password-wrapper">
-                    <input type="password" id="webdavPassword" placeholder="WebDAV 密码">
-                    <button type="button" class="password-toggle" id="toggleWebdavPassword">👁️</button>
-                  </div>
-                </div>
+                <div class="form-group"><label>用户名</label><input type="text" id="webdavUsername" placeholder="WebDAV 用户名"></div>
+                <div class="form-group"><label>密码</label><div class="password-wrapper"><input type="password" id="webdavPassword" placeholder="WebDAV 密码"><button type="button" class="password-toggle" id="toggleWebdavPassword">👁️</button></div></div>
               </div>
-
               <div class="action-grid three">
                 <button class="btn-secondary" id="testWebdav">测试连接</button>
                 <button class="btn-success" id="backupToWebdav">上传备份</button>
                 <button class="btn-secondary" id="restoreFromWebdav">下载并导入</button>
               </div>
-
-              <div class="meta-row">
-                <div class="hint" id="webdavMeta">尚未执行 WebDAV 同步</div>
-                <div id="statusWebdav" class="status"></div>
-              </div>
+              <div class="meta-row"><div class="hint" id="webdavMeta">尚未执行 WebDAV 同步</div><div id="statusWebdav" class="status"></div></div>
             </div>
-
             <div class="inner-card">
-              <div class="card-header-row">
-                <div>
-                  <div class="card-title">WebDAV 自动同步</div>
-                  <div class="card-desc">配置自动同步设置，定期备份和恢复数据</div>
-                </div>
-                <div class="status-pill" id="webdavAutoSyncBadge">已禁用</div>
-              </div>
+              <div class="card-header-row"><div><div class="card-title">WebDAV 自动同步</div><div class="card-desc">开启后按间隔同步，也会在规则和配置变化后尝试自动同步。</div></div><div class="status-pill" id="webdavAutoSyncBadge">已禁用</div></div>
+              <div class="toggle-row"><div class="toggle-copy"><div class="card-title">启用自动同步</div><div class="card-desc">建议设置为 5 分钟以上，避免频繁请求 WebDAV。</div></div><label class="switch"><input type="checkbox" id="webdavAutoSync"><span class="slider"></span></label></div>
+              <div class="form-group" style="margin-top: 14px;"><label>同步间隔（分钟）</label><input type="number" id="webdavAutoSyncInterval" min="5" step="5" value="30"></div>
+              <div class="action-grid one"><button class="btn-success" id="syncWebdav">立即同步</button></div>
+            </div>
+          </div>
+        </section>
 
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <div class="card-title">启用自动同步</div>
-                  <div class="card-desc">开启后将按设置间隔自动与 WebDAV 数据同步，规则和配置变更后也会尝试自动同步。</div>
-                </div>
-                <label class="switch">
-                  <input type="checkbox" id="webdavAutoSync">
-                  <span class="slider"></span>
-                </label>
-              </div>
-
-              <div class="form-group" style="margin-top: 14px;">
-                <label>同步间隔（分钟）</label>
-                <input type="number" id="webdavAutoSyncInterval" min="5" step="5" value="30">
-                <div class="hint">建议设置为 5 分钟以上，避免频繁请求 WebDAV</div>
-              </div>
-
-              <div class="action-grid one">
-                <button class="btn-success" id="syncWebdav">立即同步</button>
-              </div>
+        <section class="section-card" id="section-remote" data-openclash-only style="display:none;">
+          <div id="remoteSection">
+            <div id="remoteConfig">
+              <div class="section-head"><div class="section-kicker">Advanced</div><h2>OpenClash 本地规则文件模式</h2><p class="subtitle">高级兼容模式：直接写路由器本地规则文件。多设备场景不推荐。</p></div>
+              <div class="form-group"><label>路由器地址</label><input type="text" id="host" placeholder="192.168.1.1 或 192.168.1.1:8080"></div>
+              <div class="two-col"><div class="form-group"><label>用户名</label><input type="text" id="username" placeholder="root" value="root"></div><div class="form-group"><label>密码</label><div class="password-wrapper"><input type="password" id="password" placeholder="路由器密码"><button type="button" class="password-toggle" id="togglePassword">👁️</button></div></div></div>
+              <div class="two-col"><div class="form-group"><label>代理规则文件路径</label><input type="text" id="proxyFile" placeholder="/etc/openclash/rule_provider/Custom_Proxy.yaml"></div><div class="form-group"><label>直连规则文件路径</label><input type="text" id="directFile" placeholder="/etc/openclash/rule_provider/Custom_Direct.yaml"></div></div>
+              <div class="btn-group"><button class="btn-secondary" id="testRemote">测试连接</button></div><div id="statusRemote" class="status"></div>
+              <div class="subsection"><h3>本地规则文件模式控制信息</h3><div class="form-group"><label>Clash API 地址</label><input type="text" id="clashHost" placeholder="192.168.1.1 或 http://192.168.1.1"></div><div class="two-col"><div class="form-group"><label>外部控制端口</label><input type="number" id="clashPort" placeholder="9090" value="9090"></div><div class="form-group"><label>控制面板 UI</label><select id="clashUI"><option value="zashboard">Zashboard（推荐）</option><option value="dashboard">MetaCubeXD</option><option value="yacd">Yacd</option><option value="razord">Razord</option></select></div></div><div class="form-group"><label>Secret</label><div class="password-wrapper"><input type="password" id="clashSecret" placeholder="OpenClash 外部控制密钥"><button type="button" class="password-toggle" id="toggleSecret">👁️</button></div></div><div class="btn-group"><button class="btn-secondary" id="testClashApi">测试 Clash API</button><button class="btn-secondary" id="fetchGroups">获取代理组</button></div><div id="statusClashApi" class="status"></div><div class="form-group" style="margin-top: 16px;"><label>代理组</label><select id="proxyGroup" disabled><option value="">请先获取代理组列表</option></select></div><button class="btn-primary full-width" id="autoConfigRemote" disabled>写入本地规则文件配置</button><div id="statusAutoConfig" class="status"></div></div>
             </div>
           </div>
         </section>
