@@ -136,7 +136,7 @@ async function getProviderRefreshTargets() {
   const externalTarget = resolveControllerTarget(
     syncTestState?.cloudExternal?.ready ? syncTestState.cloudExternal.target : localClientConfig
   );
-  return externalTarget ? [{ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' }] : [];
+  return externalTarget ? [{ target: externalTarget, mode: 'localClash', label: '本地 Clash' }] : [];
 }
 
 async function refreshConfiguredRuleProviders(type) {
@@ -161,7 +161,9 @@ async function refreshRuleProviders(targetConfig, type, mode) {
 
   const providerName = mode === 'remote'
     ? (type === 'PROXY' ? 'Rule-provider%20-%20Custom_Proxy' : 'Rule-provider%20-%20Custom_Direct')
-    : (type === 'PROXY' ? 'Rule-provider%20-%20Cloud_Proxy' : 'Rule-provider%20-%20Cloud_Direct');
+    : mode === 'localClash'
+      ? (type === 'PROXY' ? 'OpenClashHelper_Proxy' : 'OpenClashHelper_Direct')
+      : (type === 'PROXY' ? 'Rule-provider%20-%20Cloud_Proxy' : 'Rule-provider%20-%20Cloud_Direct');
 
   const response = await fetch(`http://${target.host}:${target.port}/providers/rules/${providerName}`, {
     method: 'PUT',
@@ -172,6 +174,85 @@ async function refreshRuleProviders(targetConfig, type, mode) {
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
+}
+
+function normalizeConnectionValue(value) {
+  return String(value || '').trim().toLowerCase().replace(/\.$/, '');
+}
+
+function connectionMatchesRule(connection, ruleContext) {
+  const metadata = connection?.metadata || {};
+  const host = normalizeConnectionValue(metadata.host);
+  const destinationIP = normalizeConnectionValue(metadata.destinationIP);
+  const destinationPort = String(metadata.destinationPort || '');
+  const rulePayload = normalizeConnectionValue(connection?.rulePayload);
+  const value = normalizeConnectionValue(ruleContext?.value);
+
+  if (!value) return false;
+
+  if (ruleContext.matchType === 'IP-CIDR') {
+    const targetIP = value.split('/')[0];
+    return destinationIP === targetIP || host === targetIP;
+  }
+
+  if (ruleContext.matchType === 'DST-PORT') {
+    return destinationPort === value;
+  }
+
+  if (ruleContext.matchType === 'DOMAIN') {
+    return host === value || rulePayload === value;
+  }
+
+  const matchesDomainSuffix = candidate =>
+    candidate === value || candidate.endsWith(`.${value}`);
+
+  return matchesDomainSuffix(host) || matchesDomainSuffix(rulePayload);
+}
+
+// 只断开与刚添加规则匹配的连接，确保后续请求按最新规则重新建连
+async function closeMatchingClashConnections(ruleContext) {
+  const targets = await getProviderRefreshTargets();
+  const counts = await Promise.all(targets.map(async ({ target, label }) => {
+    const resolvedTarget = resolveControllerTarget(target);
+    if (!resolvedTarget) return 0;
+
+    const headers = {};
+    if (resolvedTarget.secret) headers['Authorization'] = `Bearer ${resolvedTarget.secret}`;
+
+    try {
+      const response = await fetch(`http://${resolvedTarget.host}:${resolvedTarget.port}/connections`, {
+        headers,
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      const connections = (data.connections || []).filter(connection =>
+        connection.id && connectionMatchesRule(connection, ruleContext)
+      );
+
+      await Promise.all(connections.map(connection =>
+        fetch(`http://${resolvedTarget.host}:${resolvedTarget.port}/connections/${encodeURIComponent(connection.id)}`, {
+          method: 'DELETE',
+          headers,
+          signal: AbortSignal.timeout(5000)
+        }).then(deleteResponse => {
+          if (!deleteResponse.ok) {
+            throw new Error(`HTTP ${deleteResponse.status}`);
+          }
+        })
+      ));
+
+      return connections.length;
+    } catch (error) {
+      console.log(`断开${label}匹配连接失败:`, error.message);
+      return 0;
+    }
+  }));
+
+  return counts.reduce((total, count) => total + count, 0);
 }
 
 async function addRuleByMode(domain, type) {
@@ -202,6 +283,11 @@ async function addRuleByMode(domain, type) {
     await cloudApi.addRule(rootDomain, type, 'DOMAIN-SUFFIX');
     await refreshConfiguredRuleProviders(type);
   }
+
+  await closeMatchingClashConnections({
+    matchType: 'DOMAIN-SUFFIX',
+    value: rootDomain
+  });
 
   await OpenClashBackup.markLocalChange('context_menu_add_rule');
   await OpenClashBackup.autoSyncIfEnabled('context_menu_add_rule').catch(error => {

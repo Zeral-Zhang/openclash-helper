@@ -318,39 +318,83 @@ async function checkClashConnection(domain) {
   }
 }
 
-// 关闭匹配域名的现有 Clash 连接，强制按新规则重新建连
-async function closeClashConnections(domain) {
-  try {
-    const { config, localClientConfig } = await chrome.storage.local.get(['config', 'localClientConfig']);
-    const target = resolveControllerTarget(localClientConfig?.host ? localClientConfig : config);
-    if (!target) return 0;
+function normalizeConnectionValue(value) {
+  return String(value || '').trim().toLowerCase().replace(/\.$/, '');
+}
+
+function connectionMatchesRule(connection, ruleContext) {
+  const metadata = connection?.metadata || {};
+  const host = normalizeConnectionValue(metadata.host);
+  const destinationIP = normalizeConnectionValue(metadata.destinationIP);
+  const destinationPort = String(metadata.destinationPort || '');
+  const rulePayload = normalizeConnectionValue(connection?.rulePayload);
+  const value = normalizeConnectionValue(ruleContext?.value);
+
+  if (!value) return false;
+
+  if (ruleContext.matchType === 'IP-CIDR') {
+    const targetIP = value.split('/')[0];
+    return destinationIP === targetIP || host === targetIP;
+  }
+
+  if (ruleContext.matchType === 'DST-PORT') {
+    return destinationPort === value;
+  }
+
+  if (ruleContext.matchType === 'DOMAIN') {
+    return host === value || rulePayload === value;
+  }
+
+  const matchesDomainSuffix = candidate =>
+    candidate === value || candidate.endsWith(`.${value}`);
+
+  return matchesDomainSuffix(host) || matchesDomainSuffix(rulePayload);
+}
+
+// 只断开与刚添加规则匹配的连接，确保后续请求按最新规则重新建连
+async function closeMatchingClashConnections(ruleContext) {
+  const targets = await getProviderRefreshTargets();
+  const counts = await Promise.all(targets.map(async ({ target, label }) => {
+    const resolvedTarget = resolveControllerTarget(target);
+    if (!resolvedTarget) return 0;
 
     const headers = {};
-    if (target.secret) headers['Authorization'] = `Bearer ${target.secret}`;
+    if (resolvedTarget.secret) headers['Authorization'] = `Bearer ${resolvedTarget.secret}`;
 
-    const resp = await fetch(`http://${target.host}:${target.port}/connections`, {
-      headers,
-      signal: AbortSignal.timeout(3000)
-    });
-    if (!resp.ok) return 0;
-
-    const data = await resp.json();
-    const conns = (data.connections || []).filter(c =>
-      c.metadata?.host && c.metadata.host.includes(domain)
-    );
-
-    await Promise.all(conns.map(c =>
-      fetch(`http://${target.host}:${target.port}/connections/${c.id}`, {
-        method: 'DELETE',
+    try {
+      const response = await fetch(`http://${resolvedTarget.host}:${resolvedTarget.port}/connections`, {
         headers,
-        signal: AbortSignal.timeout(3000)
-      }).catch(() => {})
-    ));
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
 
-    return conns.length;
-  } catch (e) {
-    return 0; // 静默失败
-  }
+      const data = await response.json();
+      const connections = (data.connections || []).filter(connection =>
+        connection.id && connectionMatchesRule(connection, ruleContext)
+      );
+
+      await Promise.all(connections.map(connection =>
+        fetch(`http://${resolvedTarget.host}:${resolvedTarget.port}/connections/${encodeURIComponent(connection.id)}`, {
+          method: 'DELETE',
+          headers,
+          signal: AbortSignal.timeout(5000)
+        }).then(deleteResponse => {
+          if (!deleteResponse.ok) {
+            throw new Error(`HTTP ${deleteResponse.status}`);
+          }
+        })
+      ));
+
+      return connections.length;
+    } catch (error) {
+      console.log(`断开${label}匹配连接失败:`, error.message);
+      return 0;
+    }
+  }));
+
+  return counts.reduce((total, count) => total + count, 0);
 }
 
 // 添加规则
@@ -424,8 +468,8 @@ async function addRule(type) {
       await refreshConfiguredRuleProviders(type);
     }
     
-    // 关闭该站点现有连接，强制按新规则重新建连（否则已建立的连接仍走旧代理）
-    await closeClashConnections(currentDomain);
+    // 只断开与刚添加规则匹配的连接，降低对其他请求的影响
+    await closeMatchingClashConnections({ matchType, value: domainToAdd });
 
     await notifyBackupChanged('popup_add_rule');
     startCountdownRefresh();
@@ -454,6 +498,8 @@ async function refreshRuleProviders(targetConfig, type, mode) {
     let providerName;
     if (mode === 'remote') {
       providerName = type === 'PROXY' ? 'Rule-provider%20-%20Custom_Proxy' : 'Rule-provider%20-%20Custom_Direct';
+    } else if (mode === 'localClash') {
+      providerName = type === 'PROXY' ? 'OpenClashHelper_Proxy' : 'OpenClashHelper_Direct';
     } else {
       providerName = type === 'PROXY' ? 'Rule-provider%20-%20Cloud_Proxy' : 'Rule-provider%20-%20Cloud_Direct';
     }
@@ -551,11 +597,12 @@ function sameControllerTarget(left, right) {
 }
 
 async function getProviderRefreshTargets() {
-  const { config, localClientConfig, syncMode, syncTestState } = await chrome.storage.local.get([
+  const { config, localClientConfig, syncMode, syncTestState, activeAccessType } = await chrome.storage.local.get([
     'config',
     'localClientConfig',
     'syncMode',
-    'syncTestState'
+    'syncTestState',
+    'activeAccessType'
   ]);
 
   const mode = syncMode || 'cloudflare';
@@ -571,25 +618,27 @@ async function getProviderRefreshTargets() {
     return routerTarget ? [{ target: routerTarget, mode: 'remote', label: '路由器' }] : [];
   }
 
-  const routerReady = Boolean(syncTestState?.cloudRouter?.ready);
-  const externalReady = Boolean(syncTestState?.cloudExternal?.ready);
-  const routerTarget = routerReady ? resolveControllerTarget(syncTestState?.cloudRouter?.target) : null;
+  const activeType = activeAccessType === 'openClash' || activeAccessType === 'openclash'
+    ? 'openClash'
+    : 'localClash';
+
+  if (activeType === 'openClash') {
+    const routerTarget = resolveControllerTarget(
+      syncTestState?.cloudRouter?.ready
+        ? syncTestState.cloudRouter.target
+        : {
+            host: config?.clashHost || config?.host?.split(':')[0],
+            port: config?.clashPort || '9090',
+            secret: config?.clashSecret || ''
+          }
+    );
+    return routerTarget ? [{ target: routerTarget, mode: 'cloudflare', label: 'OpenClash' }] : [];
+  }
+
   const externalTarget = resolveControllerTarget(
-    externalReady ? syncTestState?.cloudExternal?.target : localClientConfig
+    syncTestState?.cloudExternal?.ready ? syncTestState.cloudExternal.target : localClientConfig
   );
-
-  const targets = [];
-  if (routerTarget) {
-    targets.push({ target: routerTarget, mode: 'cloudflare', label: '路由器' });
-  }
-
-  if (!routerReady && externalTarget) {
-    targets.push({ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' });
-  } else if (routerReady && externalReady && routerTarget && externalTarget && !sameControllerTarget(routerTarget, externalTarget)) {
-    targets.push({ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' });
-  }
-
-  return targets;
+  return externalTarget ? [{ target: externalTarget, mode: 'localClash', label: '本地 Clash' }] : [];
 }
 
 async function refreshConfiguredRuleProviders(type) {
