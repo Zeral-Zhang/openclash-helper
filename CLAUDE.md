@@ -41,10 +41,7 @@ Chrome 扩展（Manifest V3，纯原生 JS，无构建/打包框架），快速�
 - classical YAML payload，每行 `  - MATCH_TYPE,domain`（DOMAIN / DOMAIN-SUFFIX / DOMAIN-KEYWORD / IP-CIDR / DST-PORT）
 
 ### 规则集刷新
-添加/删除规则后向 Clash 外部控制器 `PUT /providers/rules/<name>` 热重载。provider 名按模式区分：
-- cloudflare：`Rule-provider - Cloud_Proxy` / `Cloud_Direct`
-- remote：`Rule-provider - Custom_Proxy` / `Custom_Direct`
-目标控制器由 `getProviderRefreshTargets()` 依据 `syncTestState` 计算（路由器 + 可选本地 Clash）。
+添加/删除规则后向 Clash 外部控制器 `PUT /providers/rules/<name>` 热重载。所有模式统一使用 provider 名 `OpenClashHelper_Proxy` / `OpenClashHelper_Direct`（本地 Clash 客户端同此名）。目标控制器由 `getProviderRefreshTargets()` 依据 `syncTestState` 计算（路由器 + 可选本地 Clash）。
 
 ## 关键文件
 | 文件 | 用途 |

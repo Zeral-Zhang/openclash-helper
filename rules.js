@@ -314,9 +314,7 @@ async function refreshRemoteRuleProvider(type) {
     return;
   }
 
-  const providerName = type === 'proxy'
-    ? 'Rule-provider%20-%20Custom_Proxy'
-    : 'Rule-provider%20-%20Custom_Direct';
+  const providerName = type === 'proxy' ? 'OpenClashHelper_Proxy' : 'OpenClashHelper_Direct';
 
   const headers = { 'Content-Type': 'application/json' };
   if (target.secret) {

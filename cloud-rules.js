@@ -546,11 +546,7 @@ async function refreshRuleProviders(targetConfig, type, mode) {
     headers.Authorization = `Bearer ${target.secret}`;
   }
 
-  const providerName = mode === 'remote'
-    ? (type === 'PROXY' ? 'Rule-provider%20-%20Custom_Proxy' : 'Rule-provider%20-%20Custom_Direct')
-    : mode === 'localClash'
-      ? (type === 'PROXY' ? 'OpenClashHelper_Proxy' : 'OpenClashHelper_Direct')
-      : (type === 'PROXY' ? 'Rule-provider%20-%20Cloud_Proxy' : 'Rule-provider%20-%20Cloud_Direct');
+  const providerName = type === 'PROXY' ? 'OpenClashHelper_Proxy' : 'OpenClashHelper_Direct';
 
   const response = await fetch(`http://${target.host}:${target.port}/providers/rules/${providerName}`, {
     method: 'PUT',

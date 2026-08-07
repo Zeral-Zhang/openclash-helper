@@ -347,8 +347,14 @@ chrome.storage.local.get(['config', 'cloudflareConfig', 'syncMode', 'ruleSource'
   document.getElementById('host').value = config.host || '';
   document.getElementById('username').value = config.username || 'root';
   document.getElementById('password').value = config.password || '';
-  document.getElementById('proxyFile').value = config.proxyFile || '/etc/openclash/rule_provider/Custom_Proxy.yaml';
-  document.getElementById('directFile').value = config.directFile || '/etc/openclash/rule_provider/Custom_Direct.yaml';
+  // 迁移旧版规则文件路径名到统一命名
+  const migrateRuleFilePath = (val, fallback) => {
+    if (!val) return fallback;
+    return val.replace('Custom_Proxy.yaml', 'openclash-helper-proxy.yaml')
+              .replace('Custom_Direct.yaml', 'openclash-helper-direct.yaml');
+  };
+  document.getElementById('proxyFile').value = migrateRuleFilePath(config.proxyFile, '/etc/openclash/rule_provider/openclash-helper-proxy.yaml');
+  document.getElementById('directFile').value = migrateRuleFilePath(config.directFile, '/etc/openclash/rule_provider/openclash-helper-direct.yaml');
   document.getElementById('clashHost').value = config.clashHost || '';
   document.getElementById('clashPort').value = config.clashPort || '9090';
   document.getElementById('clashSecret').value = config.clashSecret || '';
@@ -632,26 +638,26 @@ function buildOpenClashWorkerCustomRules(workerUrl, proxyGroup) {
   return {
     providers: [
       HELPER_PROVIDER_BLOCK_START,
-      '  "Rule-provider - Cloud_Direct":',
+      '  "OpenClashHelper_Direct":',
       '    type: http',
       '    behavior: classical',
       '    format: yaml',
       `    url: "${safeWorkerUrl}/direct.yaml"`,
-      '    path: ./rule_provider/openclash-helper-cloud-direct.yaml',
+      '    path: ./rule_provider/openclash-helper-direct.yaml',
       '    interval: 3600',
-      '  "Rule-provider - Cloud_Proxy":',
+      '  "OpenClashHelper_Proxy":',
       '    type: http',
       '    behavior: classical',
       '    format: yaml',
       `    url: "${safeWorkerUrl}/proxy.yaml"`,
-      '    path: ./rule_provider/openclash-helper-cloud-proxy.yaml',
+      '    path: ./rule_provider/openclash-helper-proxy.yaml',
       '    interval: 3600',
       HELPER_PROVIDER_BLOCK_END
     ],
     rules: [
       HELPER_RULE_BLOCK_START,
-      '  - RULE-SET,Rule-provider - Cloud_Direct,DIRECT',
-      `  - RULE-SET,Rule-provider - Cloud_Proxy,${safeProxyGroup}`,
+      '  - RULE-SET,OpenClashHelper_Direct,DIRECT',
+      `  - RULE-SET,OpenClashHelper_Proxy,${safeProxyGroup}`,
       HELPER_RULE_BLOCK_END
     ]
   };
@@ -739,7 +745,7 @@ async function setUciOptionIfChanged(api, sectionRef, option, value) {
   return true;
 }
 
-async function ensureCloudRuleProviderOptions(api, sectionRef, options) {
+async function ensureRuleProviderOptions(api, sectionRef, options) {
   let changed = false;
   for (const [option, value] of Object.entries(options)) {
     if (await setUciOptionIfChanged(api, sectionRef, option, value)) {
@@ -749,10 +755,10 @@ async function ensureCloudRuleProviderOptions(api, sectionRef, options) {
   return changed;
 }
 
-async function getExistingCloudProxyGroup(api) {
+async function getExistingProxyGroup(api) {
   try {
     const existingProviders = await api.exec(`uci show openclash | grep rule_providers | grep name`);
-    const proxyIndex = existingProviders.match(/openclash\.@rule_providers\[(\d+)\]\.name='Rule-provider - Cloud_Proxy'/);
+    const proxyIndex = existingProviders.match(/openclash\.@rule_providers\[(\d+)\]\.name='OpenClashHelper_Proxy'/);
     if (!proxyIndex) {
       return '';
     }
@@ -794,7 +800,7 @@ async function restoreOpenClashProxyGroupFromUci() {
   }
 
   const api = new OpenClashAPI({ host, username, password });
-  const proxyGroup = await getExistingCloudProxyGroup(api);
+  const proxyGroup = await getExistingProxyGroup(api);
   if (!proxyGroup) {
     return;
   }
@@ -1316,7 +1322,7 @@ document.getElementById('fetchGroupsCf').onclick = async () => {
     
     if (groups.length === 0) throw new Error('未找到代理组');
     
-    const existingOpenClashGroup = await getExistingCloudProxyGroup(api);
+    const existingOpenClashGroup = await getExistingProxyGroup(api);
     const { cloudflareConfig, config } = await chrome.storage.local.get(['cloudflareConfig', 'config']);
     const selectedGroup = groups.includes(existingOpenClashGroup)
       ? existingOpenClashGroup
@@ -1374,6 +1380,37 @@ document.getElementById('cfProxyGroup')?.addEventListener('change', function() {
 });
 
 // 自动配置 OpenClash UCI（云端同步）
+// 一次性清理旧版 provider 名（Cloud_*/Custom_*），避免统一后留下孤儿 UCI 段
+async function cleanupLegacyRuleProviders(api) {
+  const legacyNames = [
+    "Rule-provider - Cloud_Proxy",
+    "Rule-provider - Cloud_Direct",
+    "Rule-provider - Custom_Proxy",
+    "Rule-provider - Custom_Direct"
+  ];
+  try {
+    const existing = await api.exec(`uci show openclash | grep rule_providers | grep name`);
+    for (const legacy of legacyNames) {
+      const needle = `.name='${legacy}'`;
+      const indices = [];
+      let pos = 0;
+      while ((pos = existing.indexOf(needle, pos)) !== -1) {
+        const lineStart = existing.lastIndexOf('\n', pos) + 1;
+        const lineEnd = existing.indexOf('\n', pos);
+        const line = existing.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
+        const m = line.match(/@rule_providers\[(\d+)\]/);
+        if (m) indices.push(Number(m[1]));
+        pos += needle.length;
+      }
+      for (const idx of indices.sort((a, b) => b - a)) {
+        await api.exec(`uci delete openclash.@rule_providers[${idx}]`);
+      }
+    }
+  } catch (e) {
+    console.log('清理旧 rule_providers 段失败:', e.message);
+  }
+}
+
 document.getElementById('autoConfigCf').onclick = async () => {
   const host = document.getElementById('hostCf').value;
   const username = document.getElementById('usernameCf').value;
@@ -1401,23 +1438,24 @@ document.getElementById('autoConfigCf').onclick = async () => {
   
   try {
     const api = new OpenClashAPI({ host, username, password });
+    await cleanupLegacyRuleProviders(api);
     
     // 检查是否已存在配置
     const existingProviders = await api.exec(`uci show openclash | grep rule_providers | grep name`);
-    const hasCloudDirect = existingProviders.includes("name='Rule-provider - Cloud_Direct'");
-    const hasCloudProxy = existingProviders.includes("name='Rule-provider - Cloud_Proxy'");
+    const hasDirect = existingProviders.includes("name='OpenClashHelper_Direct'");
+    const hasProxy = existingProviders.includes("name='OpenClashHelper_Proxy'");
     
     let needRestart = false;
     
-    // 检查并更新 Cloud_Proxy
-    if (hasCloudProxy) {
-      const proxyIndex = existingProviders.match(/openclash\.@rule_providers\[(\d+)\]\.name='Rule-provider - Cloud_Proxy'/);
+    // 检查并更新 OpenClashHelper_Proxy
+    if (hasProxy) {
+      const proxyIndex = existingProviders.match(/openclash\.@rule_providers\[(\d+)\]\.name='OpenClashHelper_Proxy'/);
       if (proxyIndex) {
         const idx = proxyIndex[1];
-        const changed = await ensureCloudRuleProviderOptions(api, `openclash.@rule_providers[${idx}]`, {
+        const changed = await ensureRuleProviderOptions(api, `openclash.@rule_providers[${idx}]`, {
           enabled: '1',
           config: 'all',
-          name: 'Rule-provider - Cloud_Proxy',
+          name: 'OpenClashHelper_Proxy',
           type: 'http',
           behavior: 'classical',
           format: 'yaml',
@@ -1425,7 +1463,7 @@ document.getElementById('autoConfigCf').onclick = async () => {
           group: proxyGroup,
           url: `${workerUrl}/proxy.yaml`,
           interval: '3600',
-          path: './rule_provider/openclash-helper-cloud-proxy.yaml'
+          path: './rule_provider/openclash-helper-proxy.yaml'
         });
         if (changed) {
           needRestart = true;
@@ -1436,7 +1474,7 @@ document.getElementById('autoConfigCf').onclick = async () => {
       await api.exec(`uci add openclash rule_providers`);
       await api.exec(`uci set openclash.@rule_providers[-1].enabled='1'`);
       await api.exec(`uci set openclash.@rule_providers[-1].config='all'`);
-      await api.exec(`uci set openclash.@rule_providers[-1].name='Rule-provider - Cloud_Proxy'`);
+      await api.exec(`uci set openclash.@rule_providers[-1].name='OpenClashHelper_Proxy'`);
       await api.exec(`uci set openclash.@rule_providers[-1].type='http'`);
       await api.exec(`uci set openclash.@rule_providers[-1].behavior='classical'`);
       await api.exec(`uci set openclash.@rule_providers[-1].format='yaml'`);
@@ -1444,19 +1482,19 @@ document.getElementById('autoConfigCf').onclick = async () => {
       await api.exec(`uci set openclash.@rule_providers[-1].group=${shellSingleQuote(proxyGroup)}`);
       await api.exec(`uci set openclash.@rule_providers[-1].url=${shellSingleQuote(`${workerUrl}/proxy.yaml`)}`);
       await api.exec(`uci set openclash.@rule_providers[-1].interval='3600'`);
-      await api.exec(`uci set openclash.@rule_providers[-1].path='./rule_provider/openclash-helper-cloud-proxy.yaml'`);
+      await api.exec(`uci set openclash.@rule_providers[-1].path='./rule_provider/openclash-helper-proxy.yaml'`);
       needRestart = true;
     }
     
-    // 检查并更新 Cloud_Direct
-    if (hasCloudDirect) {
-      const directIndex = existingProviders.match(/openclash\.@rule_providers\[(\d+)\]\.name='Rule-provider - Cloud_Direct'/);
+    // 检查并更新 OpenClashHelper_Direct
+    if (hasDirect) {
+      const directIndex = existingProviders.match(/openclash\.@rule_providers\[(\d+)\]\.name='OpenClashHelper_Direct'/);
       if (directIndex) {
         const idx = directIndex[1];
-        const changed = await ensureCloudRuleProviderOptions(api, `openclash.@rule_providers[${idx}]`, {
+        const changed = await ensureRuleProviderOptions(api, `openclash.@rule_providers[${idx}]`, {
           enabled: '1',
           config: 'all',
-          name: 'Rule-provider - Cloud_Direct',
+          name: 'OpenClashHelper_Direct',
           type: 'http',
           behavior: 'classical',
           format: 'yaml',
@@ -1464,7 +1502,7 @@ document.getElementById('autoConfigCf').onclick = async () => {
           group: 'DIRECT',
           url: `${workerUrl}/direct.yaml`,
           interval: '3600',
-          path: './rule_provider/openclash-helper-cloud-direct.yaml'
+          path: './rule_provider/openclash-helper-direct.yaml'
         });
         if (changed) {
           needRestart = true;
@@ -1475,7 +1513,7 @@ document.getElementById('autoConfigCf').onclick = async () => {
       await api.exec(`uci add openclash rule_providers`);
       await api.exec(`uci set openclash.@rule_providers[-1].enabled='1'`);
       await api.exec(`uci set openclash.@rule_providers[-1].config='all'`);
-      await api.exec(`uci set openclash.@rule_providers[-1].name='Rule-provider - Cloud_Direct'`);
+      await api.exec(`uci set openclash.@rule_providers[-1].name='OpenClashHelper_Direct'`);
       await api.exec(`uci set openclash.@rule_providers[-1].type='http'`);
       await api.exec(`uci set openclash.@rule_providers[-1].behavior='classical'`);
       await api.exec(`uci set openclash.@rule_providers[-1].format='yaml'`);
@@ -1483,7 +1521,7 @@ document.getElementById('autoConfigCf').onclick = async () => {
       await api.exec(`uci set openclash.@rule_providers[-1].group='DIRECT'`);
       await api.exec(`uci set openclash.@rule_providers[-1].url=${shellSingleQuote(`${workerUrl}/direct.yaml`)}`);
       await api.exec(`uci set openclash.@rule_providers[-1].interval='3600'`);
-      await api.exec(`uci set openclash.@rule_providers[-1].path='./rule_provider/openclash-helper-cloud-direct.yaml'`);
+      await api.exec(`uci set openclash.@rule_providers[-1].path='./rule_provider/openclash-helper-direct.yaml'`);
       needRestart = true;
     }
     
@@ -1809,17 +1847,18 @@ document.getElementById('autoConfigRemote').onclick = async () => {
   
   try {
     const api = new OpenClashAPI({ host, username, password, proxyFile, directFile });
+    await cleanupLegacyRuleProviders(api);
     
     // 检查是否已存在配置
     const existingProviders = await api.exec(`uci show openclash | grep rule_providers | grep name`);
-    const hasCustomProxy = existingProviders.includes("name='Rule-provider - Custom_Proxy'");
-    const hasCustomDirect = existingProviders.includes("name='Rule-provider - Custom_Direct'");
+    const hasProxy = existingProviders.includes("name='OpenClashHelper_Proxy'");
+    const hasDirect = existingProviders.includes("name='OpenClashHelper_Direct'");
     
     let needRestart = false;
     
-    // 检查并更新 Custom_Proxy
-    if (hasCustomProxy) {
-      const proxyIndex = existingProviders.match(/openclash\.@rule_providers\[(\d+)\]\.name='Rule-provider - Custom_Proxy'/);
+    // 检查并更新 OpenClashHelper_Proxy
+    if (hasProxy) {
+      const proxyIndex = existingProviders.match(/openclash\.@rule_providers\[(\d+)\]\.name='OpenClashHelper_Proxy'/);
       if (proxyIndex) {
         const idx = proxyIndex[1];
         const existingGroup = await api.exec(`uci get openclash.@rule_providers[${idx}].group 2>/dev/null || echo ""`);
@@ -1833,7 +1872,7 @@ document.getElementById('autoConfigRemote').onclick = async () => {
       await api.exec(`uci add openclash rule_providers`);
       await api.exec(`uci set openclash.@rule_providers[-1].enabled='1'`);
       await api.exec(`uci set openclash.@rule_providers[-1].config='all'`);
-      await api.exec(`uci set openclash.@rule_providers[-1].name='Rule-provider - Custom_Proxy'`);
+      await api.exec(`uci set openclash.@rule_providers[-1].name='OpenClashHelper_Proxy'`);
       await api.exec(`uci set openclash.@rule_providers[-1].type='file'`);
       await api.exec(`uci set openclash.@rule_providers[-1].behavior='classical'`);
       await api.exec(`uci set openclash.@rule_providers[-1].format='yaml'`);
@@ -1843,12 +1882,12 @@ document.getElementById('autoConfigRemote').onclick = async () => {
       needRestart = true;
     }
     
-    // 添加 Custom_Direct（直连组不需要检查更新）
-    if (!hasCustomDirect) {
+    // 添加 OpenClashHelper_Direct（直连组不需要检查更新）
+    if (!hasDirect) {
       await api.exec(`uci add openclash rule_providers`);
       await api.exec(`uci set openclash.@rule_providers[-1].enabled='1'`);
       await api.exec(`uci set openclash.@rule_providers[-1].config='all'`);
-      await api.exec(`uci set openclash.@rule_providers[-1].name='Rule-provider - Custom_Direct'`);
+      await api.exec(`uci set openclash.@rule_providers[-1].name='OpenClashHelper_Direct'`);
       await api.exec(`uci set openclash.@rule_providers[-1].type='file'`);
       await api.exec(`uci set openclash.@rule_providers[-1].behavior='classical'`);
       await api.exec(`uci set openclash.@rule_providers[-1].format='yaml'`);

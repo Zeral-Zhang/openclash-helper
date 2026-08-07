@@ -499,14 +499,7 @@ async function refreshRuleProviders(targetConfig, type, mode) {
     const headers = { 'Content-Type': 'application/json' };
     if (target.secret) headers['Authorization'] = `Bearer ${target.secret}`;
     
-    let providerName;
-    if (mode === 'remote') {
-      providerName = type === 'PROXY' ? 'Rule-provider%20-%20Custom_Proxy' : 'Rule-provider%20-%20Custom_Direct';
-    } else if (mode === 'localClash') {
-      providerName = type === 'PROXY' ? 'OpenClashHelper_Proxy' : 'OpenClashHelper_Direct';
-    } else {
-      providerName = type === 'PROXY' ? 'Rule-provider%20-%20Cloud_Proxy' : 'Rule-provider%20-%20Cloud_Direct';
-    }
+    const providerName = type === 'PROXY' ? 'OpenClashHelper_Proxy' : 'OpenClashHelper_Direct';
     
     const url = `http://${target.host}:${target.port}/providers/rules/${providerName}`;
     console.log(`Attempting to refresh rule provider at: ${url}`);

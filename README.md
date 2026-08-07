@@ -190,7 +190,7 @@ opkg install luci-mod-rpc luci-compat
 | 配置复杂度 | 中等（需部署 Worker） | 简单 |
 | 访问速度 | 全球 CDN | 局域网 |
 | 成本 | 免费 | 免费 |
-| UCI 配置名称 | Cloud_Proxy / Cloud_Direct | Custom_Proxy / Custom_Direct |
+| UCI 配置名称 | OpenClashHelper_Proxy / OpenClashHelper_Direct | OpenClashHelper_Proxy / OpenClashHelper_Direct |
 
 ## 规则文件格式
 
