@@ -34,6 +34,8 @@ let proxyRules = '';
 let api = null;
 let currentTab = 'all';
 const copyYamlButton = document.getElementById('copyYaml');
+const addRuleForm = document.getElementById('addRuleForm');
+const addRuleButton = document.getElementById('addRuleButton');
 
 // 初始化
 async function init() {
@@ -99,7 +101,7 @@ function displayRules() {
   ruleList.innerHTML = allRules.map((rule) => `
     <div class="rule-item">
       <div class="rule-info">
-        <div class="rule-domain">${rule.domain}</div>
+        <div class="rule-domain">${escapeHtml(rule.domain)}</div>
         <div class="rule-meta">
           <span class="badge ${rule.type === 'PROXY' ? 'proxy' : 'direct'}">
             ${rule.type === 'PROXY' ? '代理' : '直连'}
@@ -109,7 +111,7 @@ function displayRules() {
           </span>
         </div>
       </div>
-      <button class="btn-danger" data-type="${rule.type}" data-match="${rule.matchType}" data-domain="${rule.domain}" style="padding: 6px 12px; font-size: 12px;">删除</button>
+      <button class="btn-danger" data-type="${rule.type}" data-match="${rule.matchType}" data-domain="${escapeAttribute(rule.domain)}" style="padding: 6px 12px; font-size: 12px;">删除</button>
     </div>
   `).join('');
   
@@ -119,6 +121,19 @@ function displayRules() {
       deleteRule(this.dataset.type, this.dataset.match, this.dataset.domain);
     });
   });
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replace(/`/g, '&#96;');
 }
 
 // 解析规则
@@ -162,11 +177,168 @@ function updateStats() {
   document.getElementById('directCount').textContent = rules.filter(r => r.type === 'DIRECT').length;
 }
 
+function normalizeRuleValue(matchType, rawValue) {
+  let value = String(rawValue || '').trim();
+  if (!value) {
+    throw new Error('请输入规则内容');
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      value = url.hostname || value;
+    } catch (error) {}
+  }
+
+  if (matchType === 'DST-PORT') {
+    value = value.replace(/[^\d]/g, '');
+    if (!value) throw new Error('目标端口必须是数字');
+    const port = Number(value);
+    if (port < 1 || port > 65535) throw new Error('端口范围应为 1-65535');
+    return String(port);
+  }
+
+  if (matchType === 'IP-CIDR') {
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(value)) {
+      return `${value}/32`;
+    }
+    if (!/^[0-9a-fA-F:.]+\/\d+$/.test(value)) {
+      throw new Error('IP-CIDR 需要形如 1.1.1.1/32');
+    }
+    return value;
+  }
+
+  value = value
+    .replace(/^www\./i, matchType === 'DOMAIN-SUFFIX' ? '' : 'www.')
+    .replace(/^\*\./, '')
+    .replace(/^\./, '')
+    .replace(/\/.*$/, '')
+    .toLowerCase();
+
+  if (!/^[a-z0-9*_.-]+$/.test(value)) {
+    throw new Error('域名规则内容格式不正确');
+  }
+
+  return value;
+}
+
+function hasRuleLine(content, line) {
+  const target = line.trim();
+  return String(content || '').split('\n').some(item => item.trim() === target);
+}
+
+function removeRuleLine(content, line) {
+  const target = line.trim();
+  const nextLines = String(content || '')
+    .split('\n')
+    .filter(item => item.trim() !== target);
+  const nextContent = nextLines.join('\n').trimEnd();
+  return nextContent || 'payload: []';
+}
+
+function appendRuleLine(content, line) {
+  const current = String(content || '').trimEnd();
+  if (!current || current === 'payload: []' || !current.includes('payload:')) {
+    return `payload:\n${line}\n`;
+  }
+  return `${current}\n${line}\n`;
+}
+
+async function addManualRule(event) {
+  event.preventDefault();
+  if (!api) {
+    showStatus('请先完成 Cloudflare Worker 配置', 'error');
+    return;
+  }
+
+  const type = document.getElementById('newRuleType').value;
+  const matchType = document.getElementById('newMatchType').value;
+  const valueInput = document.getElementById('newRuleValue');
+  const originalLabel = addRuleButton.textContent;
+
+  try {
+    const value = normalizeRuleValue(matchType, valueInput.value);
+    const line = `  - ${matchType},${value}`;
+    const targetContent = type === 'PROXY' ? proxyRules : directRules;
+
+    if (hasRuleLine(targetContent, line)) {
+      showStatus('该规则已存在', 'error');
+      return;
+    }
+
+    addRuleButton.disabled = true;
+    addRuleButton.textContent = '添加中...';
+
+    let removedOpposite = false;
+    if (type === 'PROXY') {
+      if (hasRuleLine(directRules, line)) {
+        directRules = removeRuleLine(directRules, line);
+        removedOpposite = true;
+      }
+      proxyRules = appendRuleLine(proxyRules, line);
+    } else {
+      if (hasRuleLine(proxyRules, line)) {
+        proxyRules = removeRuleLine(proxyRules, line);
+        removedOpposite = true;
+      }
+      directRules = appendRuleLine(directRules, line);
+    }
+
+    await api.saveRules(directRules, proxyRules);
+    await notifyBackupChanged('cloud_rules_added');
+    await loadRules();
+    valueInput.value = '';
+
+    await refreshRuleProvider(type);
+    if (removedOpposite) {
+      await refreshRuleProvider(type === 'PROXY' ? 'DIRECT' : 'PROXY');
+    }
+
+    showStatus(`已添加到${type === 'PROXY' ? '代理' : '直连'}规则`);
+  } catch (error) {
+    showStatus('添加失败: ' + error.message, 'error');
+  } finally {
+    addRuleButton.disabled = false;
+    addRuleButton.textContent = originalLabel;
+  }
+}
+
+addRuleForm.addEventListener('submit', addManualRule);
+
 // 刷新规则
 document.getElementById('refreshRules').addEventListener('click', async () => {
   showStatus('正在刷新...');
   await loadRules();
   showStatus('刷新完成');
+});
+
+// 手动刷新代理与直连规则集（触发 Clash controller 重新拉取）
+document.getElementById('refreshProviders').addEventListener('click', async () => {
+  const button = document.getElementById('refreshProviders');
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = '刷新中...';
+  try {
+    const proxyResults = await refreshConfiguredRuleProviders('PROXY');
+    const directResults = await refreshConfiguredRuleProviders('DIRECT');
+    const all = [...proxyResults, ...directResults];
+    if (all.length === 0) {
+      showStatus('未检测到可刷新的控制器，请先在配置页测试控制器', 'error');
+    } else {
+      const failed = all.filter(r => !r.ok);
+      if (failed.length === 0) {
+        showStatus('代理与直连规则集已刷新');
+      } else {
+        const labels = [...new Set(all.map(r => r.label))].join('、');
+        showStatus('部分刷新失败（' + labels + '）: ' + failed.map(r => r.error).join('; '), 'error');
+      }
+    }
+  } catch (error) {
+    showStatus('刷新规则集失败: ' + error.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
 });
 
 // 导出为文件
@@ -305,11 +477,12 @@ function sameControllerTarget(left, right) {
 }
 
 async function getProviderRefreshTargets() {
-  const { config, localClientConfig, syncMode, syncTestState } = await chrome.storage.local.get([
+  const { config, localClientConfig, syncMode, syncTestState, activeAccessType } = await chrome.storage.local.get([
     'config',
     'localClientConfig',
     'syncMode',
-    'syncTestState'
+    'syncTestState',
+    'activeAccessType'
   ]);
 
   const mode = syncMode || 'cloudflare';
@@ -325,34 +498,69 @@ async function getProviderRefreshTargets() {
     return routerTarget ? [{ target: routerTarget, mode: 'remote', label: '路由器' }] : [];
   }
 
-  const routerReady = Boolean(syncTestState?.cloudRouter?.ready);
-  const externalReady = Boolean(syncTestState?.cloudExternal?.ready);
-  const routerTarget = routerReady ? resolveControllerTarget(syncTestState?.cloudRouter?.target) : null;
+  const activeType = activeAccessType === 'openClash' || activeAccessType === 'openclash'
+    ? 'openClash'
+    : 'localClash';
+
+  if (activeType === 'openClash') {
+    const routerTarget = resolveControllerTarget(
+      syncTestState?.cloudRouter?.ready
+        ? syncTestState.cloudRouter.target
+        : {
+            host: config?.clashHost || config?.host?.split(':')[0],
+            port: config?.clashPort || '9090',
+            secret: config?.clashSecret || ''
+          }
+    );
+    return routerTarget ? [{ target: routerTarget, mode: 'cloudflare', label: 'OpenClash' }] : [];
+  }
+
   const externalTarget = resolveControllerTarget(
-    externalReady ? syncTestState?.cloudExternal?.target : localClientConfig
+    syncTestState?.cloudExternal?.ready ? syncTestState.cloudExternal.target : localClientConfig
   );
-
-  const targets = [];
-  if (routerTarget) {
-    targets.push({ target: routerTarget, mode: 'cloudflare', label: '路由器' });
-  }
-
-  if (!routerReady && externalTarget) {
-    targets.push({ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' });
-  } else if (routerReady && externalReady && routerTarget && externalTarget && !sameControllerTarget(routerTarget, externalTarget)) {
-    targets.push({ target: externalTarget, mode: 'cloudflare', label: '本地 Clash' });
-  }
-
-  return targets;
+  return externalTarget ? [{ target: externalTarget, mode: 'localClash', label: '本地 Clash' }] : [];
 }
 
 async function refreshConfiguredRuleProviders(type) {
   const targets = await getProviderRefreshTargets();
-  await Promise.all(targets.map(({ target, mode, label }) =>
-    refreshRuleProviders(target, type, mode).catch(error => {
+  const results = await Promise.all(targets.map(async ({ target, mode, label }) => {
+    try {
+      await refreshRuleProviders(target, type, mode);
+      return { label, ok: true };
+    } catch (error) {
       console.log(`刷新${label}规则集失败:`, error.message);
-    })
-  ));
+      return { label, ok: false, error: error.message };
+    }
+  }));
+  return results;
+}
+
+async function refreshRuleProviders(targetConfig, type, mode) {
+  const target = resolveControllerTarget(targetConfig);
+  if (!target) {
+    return;
+  }
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (target.secret) {
+    headers.Authorization = `Bearer ${target.secret}`;
+  }
+
+  const providerName = mode === 'remote'
+    ? (type === 'PROXY' ? 'Rule-provider%20-%20Custom_Proxy' : 'Rule-provider%20-%20Custom_Direct')
+    : mode === 'localClash'
+      ? (type === 'PROXY' ? 'OpenClashHelper_Proxy' : 'OpenClashHelper_Direct')
+      : (type === 'PROXY' ? 'Rule-provider%20-%20Cloud_Proxy' : 'Rule-provider%20-%20Cloud_Direct');
+
+  const response = await fetch(`http://${target.host}:${target.port}/providers/rules/${providerName}`, {
+    method: 'PUT',
+    headers,
+    signal: AbortSignal.timeout(5000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
 }
 
 // 删除规则

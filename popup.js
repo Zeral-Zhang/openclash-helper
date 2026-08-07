@@ -420,12 +420,16 @@ async function addRule(type) {
   }
   
   try {
-    const { config, cloudflareConfig, localClientConfig, syncMode } = await chrome.storage.local.get(['config', 'cloudflareConfig', 'localClientConfig', 'syncMode']);
+    const { config, cloudflareConfig, localClientConfig, syncMode, activeAccessType } = await chrome.storage.local.get(['config', 'cloudflareConfig', 'localClientConfig', 'syncMode', 'activeAccessType']);
     const mode = syncMode || 'cloudflare';
 
-    showStatus(mode === 'cloudflare' && localClientConfig?.host
-      ? '✓ 已添加，正在刷新本地 Clash 规则集...'
-      : '✓ 已添加', 'success');
+    const isOpenClash = activeAccessType === 'openClash' || activeAccessType === 'openclash';
+    const refreshLabel = mode === 'remote'
+      ? '刷新路由器规则集'
+      : isOpenClash
+        ? '刷新 OpenClash 规则集'
+        : (localClientConfig?.host ? '刷新本地 Clash 规则集' : '');
+    showStatus(refreshLabel ? `✓ 已添加，正在${refreshLabel}...` : '✓ 已添加', 'success');
 
     if (mode === 'remote') {
       if (!config || !config.host) {

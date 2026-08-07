@@ -120,6 +120,47 @@
       flex-wrap: wrap;
       margin-bottom: 18px;
     }
+    .add-rule-form {
+      display: grid;
+      grid-template-columns: minmax(140px, 0.8fr) minmax(170px, 0.9fr) minmax(240px, 1.8fr) auto;
+      gap: 12px;
+      align-items: end;
+      padding: 16px;
+      margin-bottom: 18px;
+      border-radius: 16px;
+      background: var(--panel-subtle);
+      border: 1px solid rgba(129, 155, 255, 0.12);
+    }
+    .field {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+    .field label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-soft);
+    }
+    .field input,
+    .field select {
+      width: 100%;
+      min-height: 42px;
+      padding: 10px 12px;
+      border: 1px solid var(--input-border);
+      border-radius: 12px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+    }
+    .field input:focus,
+    .field select:focus {
+      border-color: rgba(96, 165, 250, 0.58);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+    }
+    .field input::placeholder {
+      color: var(--text-dim);
+    }
     button {
       padding: 12px 16px;
       border: 1px solid transparent;
@@ -256,6 +297,7 @@
     @media (max-width: 760px) {
       body { padding: 14px; }
       .stats { grid-template-columns: 1fr; }
+      .add-rule-form { grid-template-columns: 1fr; }
       .toolbar { display: grid; grid-template-columns: 1fr 1fr; }
       .rule-item { flex-direction: column; align-items: stretch; }
     }
@@ -296,8 +338,34 @@
         <div class="stat-item"><div class="stat-value" id="directCount">0</div><div class="stat-label">直连规则</div></div>
       </div>
 
+      <form class="add-rule-form" id="addRuleForm">
+        <div class="field">
+          <label for="newRuleType">规则目标</label>
+          <select id="newRuleType">
+            <option value="PROXY">代理规则</option>
+            <option value="DIRECT">直连规则</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="newMatchType">匹配类型</label>
+          <select id="newMatchType">
+            <option value="DOMAIN-SUFFIX">域名后缀</option>
+            <option value="DOMAIN">完整域名</option>
+            <option value="DOMAIN-KEYWORD">域名关键词</option>
+            <option value="IP-CIDR">IP 段</option>
+            <option value="DST-PORT">目标端口</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="newRuleValue">规则内容</label>
+          <input id="newRuleValue" type="text" placeholder="formulae.brew.sh" autocomplete="off">
+        </div>
+        <button class="btn-primary" id="addRuleButton" type="submit">添加规则</button>
+      </form>
+
       <div class="toolbar">
         <button class="btn-secondary" id="refreshRules">刷新</button>
+        <button class="btn-secondary" id="refreshProviders">刷新规则集</button>
         <button class="btn-primary" id="exportYaml">导出 YAML</button>
         <button class="btn-secondary" id="copyYaml">复制 YAML</button>
         <button class="btn-danger" id="clearAll">清空所有</button>
@@ -311,12 +379,12 @@
 
       <div class="rule-list" id="ruleList"></div>
       <div class="empty" id="emptyState">暂无规则</div>
+      <div class="status" id="status"></div>
     </div>
 
     <div class="card" id="yamlCard" style="display:none;">
       <div class="page-subtitle" style="margin-bottom: 14px;">YAML 预览</div>
       <textarea id="yamlOutput" readonly></textarea>
-      <div class="status" id="status"></div>
     </div>
   </div>
 

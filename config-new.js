@@ -1,5 +1,10 @@
 const APP_THEME_STORAGE_KEY = 'appTheme';
 const appThemeQuery = window.matchMedia('(prefers-color-scheme: light)');
+const OPENCLASH_CUSTOM_RULES_PATH = '/etc/openclash/custom/openclash_custom_rules.list';
+const HELPER_PROVIDER_BLOCK_START = '## BEGIN openclash-helper worker rule-providers';
+const HELPER_PROVIDER_BLOCK_END = '## END openclash-helper worker rule-providers';
+const HELPER_RULE_BLOCK_START = '## BEGIN openclash-helper worker rules';
+const HELPER_RULE_BLOCK_END = '## END openclash-helper worker rules';
 
 function resolveAppTheme(theme) {
   if (theme === 'light' || theme === 'dark') return theme;
@@ -248,6 +253,21 @@ function getCurrentSetupMode() {
   return normalizeAccessType(document.querySelector('.setup-choice.active')?.dataset.setupMode || 'localClash');
 }
 
+function getCloudProxyGroupFromForm(mode = getCurrentSetupMode()) {
+  const isOpenClash = normalizeAccessType(mode) === 'openClash';
+  if (isOpenClash) {
+    return document.getElementById('openclashControllerGroup')?.value ||
+      document.getElementById('cfProxyGroup')?.value ||
+      document.getElementById('clashProxyGroupCf')?.value ||
+      'Proxy';
+  }
+
+  return document.getElementById('clashProxyGroupCf')?.value ||
+    document.getElementById('cfProxyGroup')?.value ||
+    document.getElementById('openclashControllerGroup')?.value ||
+    'Proxy';
+}
+
 function setSetupMode(mode = 'localClash', options = {}) {
   const nextMode = normalizeAccessType(mode);
   const isOpenClash = nextMode === 'openClash';
@@ -285,7 +305,7 @@ function setSetupMode(mode = 'localClash', options = {}) {
   }
 
   const workerUrl = document.getElementById('workerUrl')?.value || '';
-  const proxyGroup = document.getElementById('clashProxyGroupCf')?.value || document.getElementById('cfProxyGroup')?.value || 'Proxy';
+  const proxyGroup = getCloudProxyGroupFromForm(nextMode);
   if (workerUrl) showClashVergeMerge(workerUrl, proxyGroup);
 }
 
@@ -361,20 +381,21 @@ chrome.storage.local.get(['config', 'cloudflareConfig', 'syncMode', 'ruleSource'
     select.disabled = false;
   }
 
-  if (config.proxyGroup) {
+  const savedOpenClashProxyGroup = config.proxyGroup || cloudflareConfig.proxyGroup || '';
+  if (savedOpenClashProxyGroup) {
     const openclashSelect = document.getElementById('openclashControllerGroup');
-    openclashSelect.innerHTML = `<option value="${config.proxyGroup}">${config.proxyGroup}</option>`;
-    openclashSelect.value = config.proxyGroup;
+    openclashSelect.innerHTML = `<option value="${savedOpenClashProxyGroup}">${savedOpenClashProxyGroup}</option>`;
+    openclashSelect.value = savedOpenClashProxyGroup;
     openclashSelect.disabled = false;
     const cfGroupSelect = document.getElementById('cfProxyGroup');
-    cfGroupSelect.innerHTML = `<option value="${config.proxyGroup}">${config.proxyGroup}</option>`;
-    cfGroupSelect.value = config.proxyGroup;
+    cfGroupSelect.innerHTML = `<option value="${savedOpenClashProxyGroup}">${savedOpenClashProxyGroup}</option>`;
+    cfGroupSelect.value = savedOpenClashProxyGroup;
     cfGroupSelect.disabled = false;
   }
 
   // 如果已配置 Cloudflare，显示 Clash Verge 配置
   if (cloudflareConfig.workerUrl) {
-    const proxyGroup = localClientConfig.proxyGroup || cloudflareConfig.proxyGroup || 'Proxy';
+    const proxyGroup = getCloudProxyGroupFromForm(result.activeAccessType || result.setupTarget || 'localClash');
     showClashVergeMerge(cloudflareConfig.workerUrl, proxyGroup);
   }
 
@@ -387,6 +408,9 @@ chrome.storage.local.get(['config', 'cloudflareConfig', 'syncMode', 'ruleSource'
 
   updateWebDAVMeta(result.backupState || {});
   updateOverviewStatus(result).catch(() => {});
+  restoreOpenClashProxyGroupFromUci().catch(error => {
+    console.log('读取 OpenClash 当前代理组失败:', error.message);
+  });
 });
 
 function getWebDAVConfigFromForm() {
@@ -584,7 +608,7 @@ function updateOpenClashManualConfig(workerUrl, proxyGroup = 'Proxy') {
     '   Behavior: classical',
     '   Format: yaml',
     '   URL: ' + safeWorkerUrl + '/direct.yaml',
-    '   Path: ./ruleset/openclash-helper-direct.yaml',
+    '   Path: ./rule_provider/openclash-helper-direct.yaml',
     '   策略组: DIRECT',
     '   更新间隔: 3600',
     '',
@@ -593,7 +617,7 @@ function updateOpenClashManualConfig(workerUrl, proxyGroup = 'Proxy') {
     '   Behavior: classical',
     '   Format: yaml',
     '   URL: ' + safeWorkerUrl + '/proxy.yaml',
-    '   Path: ./ruleset/openclash-helper-proxy.yaml',
+    '   Path: ./rule_provider/openclash-helper-proxy.yaml',
     '   策略组: ' + safeProxyGroup,
     '   更新间隔: 3600',
     '',
@@ -601,14 +625,199 @@ function updateOpenClashManualConfig(workerUrl, proxyGroup = 'Proxy') {
   ].join('\n');
 }
 
+function buildOpenClashWorkerCustomRules(workerUrl, proxyGroup) {
+  const safeWorkerUrl = (workerUrl || '').replace(/\/$/, '');
+  const safeProxyGroup = proxyGroup || 'Proxy';
+
+  return {
+    providers: [
+      HELPER_PROVIDER_BLOCK_START,
+      '  "Rule-provider - Cloud_Direct":',
+      '    type: http',
+      '    behavior: classical',
+      '    format: yaml',
+      `    url: "${safeWorkerUrl}/direct.yaml"`,
+      '    path: ./rule_provider/openclash-helper-cloud-direct.yaml',
+      '    interval: 3600',
+      '  "Rule-provider - Cloud_Proxy":',
+      '    type: http',
+      '    behavior: classical',
+      '    format: yaml',
+      `    url: "${safeWorkerUrl}/proxy.yaml"`,
+      '    path: ./rule_provider/openclash-helper-cloud-proxy.yaml',
+      '    interval: 3600',
+      HELPER_PROVIDER_BLOCK_END
+    ],
+    rules: [
+      HELPER_RULE_BLOCK_START,
+      '  - RULE-SET,Rule-provider - Cloud_Direct,DIRECT',
+      `  - RULE-SET,Rule-provider - Cloud_Proxy,${safeProxyGroup}`,
+      HELPER_RULE_BLOCK_END
+    ]
+  };
+}
+
+function removeManagedBlock(content, startMarker, endMarker) {
+  const lines = String(content || '').split(/\r?\n/);
+  const result = [];
+  let skipping = false;
+
+  lines.forEach(line => {
+    if (line.trim() === startMarker) {
+      skipping = true;
+      return;
+    }
+    if (line.trim() === endMarker) {
+      skipping = false;
+      return;
+    }
+    if (!skipping) result.push(line);
+  });
+
+  return result.join('\n');
+}
+
+function ensureYamlSection(content, sectionName) {
+  const sectionPattern = new RegExp(`^${sectionName}:\\s*$`, 'm');
+  if (sectionPattern.test(content)) {
+    return content;
+  }
+
+  const normalized = content.trimEnd();
+  return `${normalized}${normalized ? '\n\n' : ''}${sectionName}:\n`;
+}
+
+function insertBlockAfterSection(content, sectionName, blockLines) {
+  const lines = ensureYamlSection(content, sectionName).split(/\r?\n/);
+  const sectionIndex = lines.findIndex(line => line.trim() === `${sectionName}:`);
+  if (sectionIndex === -1) {
+    return `${lines.join('\n').trimEnd()}\n\n${sectionName}:\n${blockLines.join('\n')}\n`;
+  }
+
+  lines.splice(sectionIndex + 1, 0, ...blockLines);
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+}
+
+function mergeOpenClashWorkerCustomRules(content, workerUrl, proxyGroup) {
+  let nextContent = removeManagedBlock(content, HELPER_PROVIDER_BLOCK_START, HELPER_PROVIDER_BLOCK_END);
+  nextContent = removeManagedBlock(nextContent, HELPER_RULE_BLOCK_START, HELPER_RULE_BLOCK_END);
+
+  const blocks = buildOpenClashWorkerCustomRules(workerUrl, proxyGroup);
+  nextContent = insertBlockAfterSection(nextContent, 'rule-providers', blocks.providers);
+  nextContent = insertBlockAfterSection(nextContent, 'rules', blocks.rules);
+  return nextContent;
+}
+
+async function writeOpenClashWorkerCustomRules(api, workerUrl, proxyGroup) {
+  await api.exec('mkdir -p /etc/openclash/custom');
+  let currentContent = '';
+  try {
+    currentContent = await api.readFile(OPENCLASH_CUSTOM_RULES_PATH);
+  } catch (error) {
+    currentContent = 'rule-providers:\nrules:\n';
+  }
+
+  const nextContent = mergeOpenClashWorkerCustomRules(currentContent, workerUrl, proxyGroup);
+  if (nextContent !== currentContent) {
+    await api.writeFile(OPENCLASH_CUSTOM_RULES_PATH, nextContent);
+    return true;
+  }
+  return false;
+}
+
+function shellSingleQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+async function setUciOptionIfChanged(api, sectionRef, option, value) {
+  const current = await api.exec(`uci get ${sectionRef}.${option} 2>/dev/null || echo ""`);
+  if (current.trim() === String(value)) {
+    return false;
+  }
+
+  await api.exec(`uci set ${sectionRef}.${option}=${shellSingleQuote(value)}`);
+  return true;
+}
+
+async function ensureCloudRuleProviderOptions(api, sectionRef, options) {
+  let changed = false;
+  for (const [option, value] of Object.entries(options)) {
+    if (await setUciOptionIfChanged(api, sectionRef, option, value)) {
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+async function getExistingCloudProxyGroup(api) {
+  try {
+    const existingProviders = await api.exec(`uci show openclash | grep rule_providers | grep name`);
+    const proxyIndex = existingProviders.match(/openclash\.@rule_providers\[(\d+)\]\.name='Rule-provider - Cloud_Proxy'/);
+    if (!proxyIndex) {
+      return '';
+    }
+
+    const group = await api.exec(`uci get openclash.@rule_providers[${proxyIndex[1]}].group 2>/dev/null || echo ""`);
+    return group.trim();
+  } catch (error) {
+    return '';
+  }
+}
+
+function populateSelectOptions(select, options, selectedValue = '') {
+  select.replaceChildren(...options.map(value => new Option(value, value)));
+  select.disabled = false;
+  if (selectedValue && options.includes(selectedValue)) {
+    select.value = selectedValue;
+  }
+  return select.value;
+}
+
+function setSelectValue(select, value) {
+  if (!select || !value) {
+    return;
+  }
+
+  if (![...select.options].some(option => option.value === value)) {
+    select.appendChild(new Option(value, value));
+  }
+  select.value = value;
+  select.disabled = false;
+}
+
+async function restoreOpenClashProxyGroupFromUci() {
+  const host = document.getElementById('hostCf')?.value;
+  const username = document.getElementById('usernameCf')?.value;
+  const password = document.getElementById('passwordCf')?.value;
+  if (!host || !password || getCurrentSetupMode() !== 'openClash') {
+    return;
+  }
+
+  const api = new OpenClashAPI({ host, username, password });
+  const proxyGroup = await getExistingCloudProxyGroup(api);
+  if (!proxyGroup) {
+    return;
+  }
+
+  setSelectValue(document.getElementById('openclashControllerGroup'), proxyGroup);
+  setSelectValue(document.getElementById('cfProxyGroup'), proxyGroup);
+
+  const { cloudflareConfig, config } = await chrome.storage.local.get(['cloudflareConfig', 'config']);
+  await chrome.storage.local.set({
+    cloudflareConfig: { ...(cloudflareConfig || {}), proxyGroup },
+    config: { ...(config || {}), proxyGroup }
+  });
+  refreshGeneratedConfigs();
+}
+
 function refreshGeneratedConfigs() {
   const workerUrl = document.getElementById('workerUrl')?.value || '';
-  const proxyGroup = document.getElementById('clashProxyGroupCf')?.value || document.getElementById('cfProxyGroup')?.value || 'Proxy';
+  const proxyGroup = getCloudProxyGroupFromForm();
   if (workerUrl) showClashVergeMerge(workerUrl, proxyGroup);
   else updateOpenClashManualConfig('', proxyGroup);
 }
 
-['workerUrl', 'clashProxyGroupCf', 'cfProxyGroup'].forEach(id => {
+['workerUrl', 'clashProxyGroupCf', 'cfProxyGroup', 'openclashControllerGroup'].forEach(id => {
   document.getElementById(id)?.addEventListener('change', refreshGeneratedConfigs);
   document.getElementById(id)?.addEventListener('input', refreshGeneratedConfigs);
 });
@@ -1107,21 +1316,31 @@ document.getElementById('fetchGroupsCf').onclick = async () => {
     
     if (groups.length === 0) throw new Error('未找到代理组');
     
+    const existingOpenClashGroup = await getExistingCloudProxyGroup(api);
+    const { cloudflareConfig, config } = await chrome.storage.local.get(['cloudflareConfig', 'config']);
+    const selectedGroup = groups.includes(existingOpenClashGroup)
+      ? existingOpenClashGroup
+      : groups.includes(cloudflareConfig?.proxyGroup)
+        ? cloudflareConfig.proxyGroup
+        : groups.includes(config?.proxyGroup)
+          ? config.proxyGroup
+          : '';
+
     const select = document.getElementById('cfProxyGroup');
-    select.innerHTML = groups.map(g => `<option value="${g}">${g}</option>`).join('');
-    select.disabled = false;
+    populateSelectOptions(select, groups, selectedGroup);
     const openclashSelect = document.getElementById('openclashControllerGroup');
-    openclashSelect.innerHTML = select.innerHTML;
-    openclashSelect.disabled = false;
+    populateSelectOptions(openclashSelect, groups, select.value);
     document.getElementById('autoConfigCf').disabled = false;
-    
-    // 恢复之前保存的选择
-    const { cloudflareConfig } = await chrome.storage.local.get(['cloudflareConfig']);
-    if (cloudflareConfig?.proxyGroup && groups.includes(cloudflareConfig.proxyGroup)) {
-      select.value = cloudflareConfig.proxyGroup;
+
+    if (select.value) {
+      await chrome.storage.local.set({
+        cloudflareConfig: { ...(cloudflareConfig || {}), proxyGroup: select.value },
+        config: { ...(config || {}), proxyGroup: select.value }
+      });
     }
     
-    showStatus('statusCf', `✅ 找到 ${groups.length} 个代理组`, 'success');
+    const sourceText = existingOpenClashGroup && groups.includes(existingOpenClashGroup) ? '，已读取 OpenClash 当前代理组' : '';
+    showStatus('statusCf', `✅ 找到 ${groups.length} 个代理组${sourceText}`, 'success');
     
     // 更新 Clash Verge 配置
     const workerUrl = document.getElementById('workerUrl').value;
@@ -1161,7 +1380,7 @@ document.getElementById('autoConfigCf').onclick = async () => {
   const password = document.getElementById('passwordCf').value;
   const workerUrl = document.getElementById('workerUrl').value;
   const apiSecret = document.getElementById('apiSecret').value;
-  const proxyGroup = document.getElementById('cfProxyGroup').value;
+  const proxyGroup = getCloudProxyGroupFromForm('openClash');
   
   if (!host || !password) {
     showStatus('statusAutoConfigCf', '请填写路由器信息', 'error');
@@ -1195,11 +1414,22 @@ document.getElementById('autoConfigCf').onclick = async () => {
       const proxyIndex = existingProviders.match(/openclash\.@rule_providers\[(\d+)\]\.name='Rule-provider - Cloud_Proxy'/);
       if (proxyIndex) {
         const idx = proxyIndex[1];
-        const existingGroup = await api.exec(`uci get openclash.@rule_providers[${idx}].group 2>/dev/null || echo ""`);
-        if (existingGroup.trim() !== proxyGroup) {
-          await api.exec(`uci set openclash.@rule_providers[${idx}].group='${proxyGroup}'`);
+        const changed = await ensureCloudRuleProviderOptions(api, `openclash.@rule_providers[${idx}]`, {
+          enabled: '1',
+          config: 'all',
+          name: 'Rule-provider - Cloud_Proxy',
+          type: 'http',
+          behavior: 'classical',
+          format: 'yaml',
+          position: '0',
+          group: proxyGroup,
+          url: `${workerUrl}/proxy.yaml`,
+          interval: '3600',
+          path: './rule_provider/openclash-helper-cloud-proxy.yaml'
+        });
+        if (changed) {
           needRestart = true;
-          showStatus('statusAutoConfigCf', '✓ 已更新代理组配置', 'success');
+          showStatus('statusAutoConfigCf', '✓ 已更新代理规则源配置', 'success');
         }
       }
     } else {
@@ -1211,15 +1441,37 @@ document.getElementById('autoConfigCf').onclick = async () => {
       await api.exec(`uci set openclash.@rule_providers[-1].behavior='classical'`);
       await api.exec(`uci set openclash.@rule_providers[-1].format='yaml'`);
       await api.exec(`uci set openclash.@rule_providers[-1].position='0'`);
-      await api.exec(`uci set openclash.@rule_providers[-1].group='${proxyGroup}'`);
-      await api.exec(`uci set openclash.@rule_providers[-1].url='${workerUrl}/proxy.yaml'`);
+      await api.exec(`uci set openclash.@rule_providers[-1].group=${shellSingleQuote(proxyGroup)}`);
+      await api.exec(`uci set openclash.@rule_providers[-1].url=${shellSingleQuote(`${workerUrl}/proxy.yaml`)}`);
       await api.exec(`uci set openclash.@rule_providers[-1].interval='3600'`);
-      await api.exec(`uci set openclash.@rule_providers[-1].path='./ruleset/cloud-proxy.yaml'`);
+      await api.exec(`uci set openclash.@rule_providers[-1].path='./rule_provider/openclash-helper-cloud-proxy.yaml'`);
       needRestart = true;
     }
     
-    // 添加 Cloud_Direct（直连组不需要检查更新）
-    if (!hasCloudDirect) {
+    // 检查并更新 Cloud_Direct
+    if (hasCloudDirect) {
+      const directIndex = existingProviders.match(/openclash\.@rule_providers\[(\d+)\]\.name='Rule-provider - Cloud_Direct'/);
+      if (directIndex) {
+        const idx = directIndex[1];
+        const changed = await ensureCloudRuleProviderOptions(api, `openclash.@rule_providers[${idx}]`, {
+          enabled: '1',
+          config: 'all',
+          name: 'Rule-provider - Cloud_Direct',
+          type: 'http',
+          behavior: 'classical',
+          format: 'yaml',
+          position: '0',
+          group: 'DIRECT',
+          url: `${workerUrl}/direct.yaml`,
+          interval: '3600',
+          path: './rule_provider/openclash-helper-cloud-direct.yaml'
+        });
+        if (changed) {
+          needRestart = true;
+          showStatus('statusAutoConfigCf', '✓ 已更新直连规则源配置', 'success');
+        }
+      }
+    } else {
       await api.exec(`uci add openclash rule_providers`);
       await api.exec(`uci set openclash.@rule_providers[-1].enabled='1'`);
       await api.exec(`uci set openclash.@rule_providers[-1].config='all'`);
@@ -1229,12 +1481,18 @@ document.getElementById('autoConfigCf').onclick = async () => {
       await api.exec(`uci set openclash.@rule_providers[-1].format='yaml'`);
       await api.exec(`uci set openclash.@rule_providers[-1].position='0'`);
       await api.exec(`uci set openclash.@rule_providers[-1].group='DIRECT'`);
-      await api.exec(`uci set openclash.@rule_providers[-1].url='${workerUrl}/direct.yaml'`);
+      await api.exec(`uci set openclash.@rule_providers[-1].url=${shellSingleQuote(`${workerUrl}/direct.yaml`)}`);
       await api.exec(`uci set openclash.@rule_providers[-1].interval='3600'`);
-      await api.exec(`uci set openclash.@rule_providers[-1].path='./ruleset/cloud-direct.yaml'`);
+      await api.exec(`uci set openclash.@rule_providers[-1].path='./rule_provider/openclash-helper-cloud-direct.yaml'`);
       needRestart = true;
     }
     
+    showStatus('statusAutoConfigCf', '正在写入 OpenClash 自定义规则...', 'success');
+    const customRulesChanged = await writeOpenClashWorkerCustomRules(api, workerUrl, proxyGroup);
+    if (customRulesChanged) {
+      needRestart = true;
+    }
+
     if (!needRestart) {
       showStatus('statusAutoConfigCf', '✅ UCI 配置已是最新，无需更新', 'success');
       // 仍然保存配置
@@ -1625,6 +1883,9 @@ document.getElementById('autoConfigRemote').onclick = async () => {
 function collectAllSettings() {
   const ruleSource = document.getElementById('ruleSource')?.value || getRuleSourceFromSyncMode(document.getElementById('syncMode').value);
   const syncMode = getSyncModeFromRuleSource(ruleSource);
+  const activeAccessType = getCurrentSetupMode();
+  const openClashProxyGroup = getCloudProxyGroupFromForm('openClash');
+  const localClashProxyGroup = getCloudProxyGroupFromForm('localClash');
   document.getElementById('syncMode').value = syncMode;
 
   const config = {
@@ -1637,13 +1898,15 @@ function collectAllSettings() {
     clashPort: document.getElementById('openclashControllerPort').value || document.getElementById('clashPort').value || '9090',
     clashSecret: document.getElementById('openclashControllerSecret').value || document.getElementById('clashSecret').value,
     clashUI: document.getElementById('openclashControllerUI').value || document.getElementById('clashUI').value,
-    proxyGroup: document.getElementById('openclashControllerGroup').value || document.getElementById('cfProxyGroup').value || document.getElementById('proxyGroup').value
+    proxyGroup: syncMode === 'remote'
+      ? document.getElementById('proxyGroup').value
+      : openClashProxyGroup
   };
 
   const cloudflareConfig = {
     workerUrl: document.getElementById('workerUrl').value,
     apiSecret: document.getElementById('apiSecret').value,
-    proxyGroup: document.getElementById('openclashControllerGroup')?.value || document.getElementById('cfProxyGroup').value || ''
+    proxyGroup: activeAccessType === 'openClash' ? openClashProxyGroup : localClashProxyGroup
   };
 
   const localClientConfig = {
@@ -1651,7 +1914,7 @@ function collectAllSettings() {
     port: document.getElementById('clashPortCf').value || '9090',
     secret: document.getElementById('clashSecretCf').value,
     ui: document.getElementById('clashUICf').value,
-    proxyGroup: document.getElementById('clashProxyGroupCf').value || ''
+    proxyGroup: localClashProxyGroup
   };
 
   const webdavConfig = getWebDAVConfigFromForm();
