@@ -297,8 +297,22 @@ function escapeHtml(value) {
     clashInfo.textContent = '';
 
     try {
-      const { config, localClientConfig } = await chrome.storage.local.get(['config', 'localClientConfig']);
-      const target = resolveControllerTarget(localClientConfig?.host ? localClientConfig : config);
+      const { config, localClientConfig, syncTestState, activeAccessType } = await chrome.storage.local.get([
+        'config', 'localClientConfig', 'syncTestState', 'activeAccessType'
+      ]);
+      const isOpenClash = activeAccessType === 'openClash' || activeAccessType === 'openclash';
+      // 根据当前接入模式选择正确的控制器目标，避免 OpenClash 模式下误用本地 Clash 客户端
+      const target = resolveControllerTarget(
+        isOpenClash
+          ? (syncTestState?.cloudRouter?.ready
+              ? syncTestState.cloudRouter.target
+              : {
+                  host: config?.clashHost || config?.host?.split(':')[0],
+                  port: config?.clashPort || '9090',
+                  secret: config?.clashSecret || ''
+                })
+          : (localClientConfig?.host ? localClientConfig : config)
+      );
       if (!target) return;
 
       const headers = {};
