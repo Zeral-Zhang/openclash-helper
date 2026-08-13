@@ -416,6 +416,43 @@
       transform: translateY(-1px);
       filter: brightness(1.03);
     }
+    .clash-info-wrap {
+      margin-top: 10px;
+    }
+    .clash-info-card {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 9px 11px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--panel-muted);
+      font-size: 11px;
+      line-height: 1.55;
+      color: var(--text-soft);
+    }
+    .clash-info-card .ci-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      min-width: 0;
+    }
+    .clash-info-card .ci-label {
+      flex: 0 0 auto;
+      min-width: 42px;
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+    .clash-info-card .ci-value {
+      flex: 1 1 auto;
+      min-width: 0;
+      word-break: break-all;
+      color: var(--text);
+    }
+    .clash-info-card .ci-mono {
+      font-family: 'SFMono-Regular', ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+      font-size: 10.5px;
+    }
     .status {
       display: none;
       margin-top: 10px;
@@ -465,7 +502,7 @@
         <div class="site-label" id="currentLabel">当前站点</div>
         <div class="site-domain" id="current">加载中...</div>
         <div class="status-card" id="accessStatus"></div>
-        <div id="clashInfo" style="font-size:11px;color:var(--text-dim);padding:4px 0 0 0;line-height:1.5"></div>
+        <div id="clashInfo" class="clash-info-wrap"></div>
       </div>
     </div>
 

@@ -283,42 +283,75 @@ function showProxyHint(reason) {
   renderAccessStatus('warning', reason, true);
 }
 
-// 查询 Clash 当前连接信息
-async function checkClashConnection(domain) {
-  const clashInfo = document.getElementById('clashInfo');
-  if (!clashInfo) return;
-  clashInfo.textContent = '';
-
-  try {
-    const { config, localClientConfig } = await chrome.storage.local.get(['config', 'localClientConfig']);
-    const target = resolveControllerTarget(localClientConfig?.host ? localClientConfig : config);
-    if (!target) return;
-
-    const headers = {};
-    if (target.secret) headers['Authorization'] = `Bearer ${target.secret}`;
-
-    const resp = await fetch(`http://${target.host}:${target.port}/connections`, {
-      headers,
-      signal: AbortSignal.timeout(3000)
-    });
-    if (!resp.ok) return;
-
-    const data = await resp.json();
-    const conns = (data.connections || []).filter(c =>
-      c.metadata?.host && c.metadata.host.includes(domain)
-    );
-    if (!conns.length) return;
-
-    const conn = conns[conns.length - 1];
-    const rule = conn.rule ? `${conn.rule}${conn.rulePayload ? ',' + conn.rulePayload : ''}` : '—';
-    const chain = conn.chains?.[0] || '—';
-    clashInfo.textContent = `规则：${rule} · 代理组：${chain}`;
-  } catch (e) {
-    // 静默失败
+// 转义 HTML，避免规则/代理链中含特殊字符导致渲染异常
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
   }
-}
 
-function normalizeConnectionValue(value) {
+  // 查询 Clash 当前连接信息，展示命中的规则与完整代理链
+  async function checkClashConnection(domain) {
+    const clashInfo = document.getElementById('clashInfo');
+    if (!clashInfo) return;
+    clashInfo.textContent = '';
+
+    try {
+      const { config, localClientConfig } = await chrome.storage.local.get(['config', 'localClientConfig']);
+      const target = resolveControllerTarget(localClientConfig?.host ? localClientConfig : config);
+      if (!target) return;
+
+      const headers = {};
+      if (target.secret) headers['Authorization'] = `Bearer ${target.secret}`;
+
+      const resp = await fetch(`http://${target.host}:${target.port}/connections`, {
+        headers,
+        signal: AbortSignal.timeout(3000)
+      });
+      if (!resp.ok) return;
+
+      const data = await resp.json();
+      const conns = (data.connections || []).filter(c =>
+        c.metadata?.host && c.metadata.host.includes(domain)
+      );
+      if (!conns.length) return;
+
+      // 取最近一条匹配当前域名的连接
+      const conn = conns[conns.length - 1];
+      const meta = conn.metadata || {};
+
+      // 命中规则：规则类型 + 负载
+      const rule = conn.rule
+        ? `${conn.rule}${conn.rulePayload ? ',' + conn.rulePayload : ''}`
+        : '—';
+
+      // 完整代理链：chains[0] 为入口代理组，末尾为实际出口节点
+      const chains = Array.isArray(conn.chains) ? conn.chains : [];
+      const chainText = chains.length ? chains.join(' → ') : '—';
+
+      // 目标地址（IP:端口）与传输协议
+      const dest = [meta.destinationIP, meta.destinationPort].filter(Boolean).join(':');
+      const network = meta.network ? meta.network.toUpperCase() : '';
+
+      const rows = [
+        `<div class="ci-row"><span class="ci-label">规则</span><span class="ci-value ci-mono">${escapeHtml(rule)}</span></div>`,
+        `<div class="ci-row"><span class="ci-label">代理链</span><span class="ci-value">${escapeHtml(chainText)}</span></div>`,
+      ];
+
+      if (dest || network) {
+        const parts = [];
+        if (network) parts.push(network);
+        if (dest) parts.push(dest);
+        rows.push(`<div class="ci-row"><span class="ci-label">目标</span><span class="ci-value ci-mono">${escapeHtml(parts.join(' · '))}</span></div>`);
+      }
+
+      clashInfo.innerHTML = `<div class="clash-info-card">${rows.join('')}</div>`;
+    } catch (e) {
+      // 静默失败
+    }
+  }
+
+  function normalizeConnectionValue(value) {
   return String(value || '').trim().toLowerCase().replace(/\.$/, '');
 }
 
