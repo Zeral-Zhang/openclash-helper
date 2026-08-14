@@ -313,7 +313,10 @@ function escapeHtml(value) {
                 })
           : (localClientConfig?.host ? localClientConfig : config)
       );
-      if (!target) return;
+      if (!target) {
+        clashInfo.innerHTML = `<div class="clash-info-card"><div class="ci-row"><span class="ci-value ci-muted">未配置控制器地址</span></div></div>`;
+        return;
+      }
 
       const headers = {};
       if (target.secret) headers['Authorization'] = `Bearer ${target.secret}`;
@@ -328,7 +331,10 @@ function escapeHtml(value) {
       const conns = (data.connections || []).filter(c =>
         c.metadata?.host && c.metadata.host.includes(domain)
       );
-      if (!conns.length) return;
+      if (!conns.length) {
+        clashInfo.innerHTML = `<div class="clash-info-card"><div class="ci-row"><span class="ci-value ci-muted">暂无匹配该域名的活跃连接</span></div></div>`;
+        return;
+      }
 
       // 取最近一条匹配当前域名的连接
       const conn = conns[conns.length - 1];
@@ -361,7 +367,7 @@ function escapeHtml(value) {
 
       clashInfo.innerHTML = `<div class="clash-info-card">${rows.join('')}</div>`;
     } catch (e) {
-      // 静默失败
+      clashInfo.innerHTML = `<div class="clash-info-card"><div class="ci-row"><span class="ci-value ci-muted">连接信息获取失败</span></div></div>`;
     }
   }
 
@@ -774,32 +780,24 @@ document.getElementById('viewRules').onclick = async () => {
 
 // 打开控制面板
 document.getElementById('openDashboard').onclick = async () => {
-  const { config, localClientConfig, syncMode } = await chrome.storage.local.get(['config', 'localClientConfig', 'syncMode']);
-  const mode = syncMode || 'cloudflare';
-
-  let target = null;
-  if (mode === 'cloudflare' && localClientConfig?.host) {
-    target = {
-      host: localClientConfig.host,
-      port: localClientConfig.port || '9090',
-      secret: localClientConfig.secret || '',
-      ui: localClientConfig.ui || 'zashboard'
-    };
-  } else if (config?.host) {
-    target = {
-      host: config.clashHost || config.host.split(':')[0],
-      port: config.clashPort || '9090',
-      secret: config.clashSecret || '',
-      ui: config.clashUI || 'zashboard'
-    };
-  }
-
-  if (!target?.host) {
+  // 复用 getProviderRefreshTargets 逻辑，根据当前接入模式（OpenClash / 本地 Clash / 路由器）
+  // 选择正确的控制器目标，避免 OpenClash 模式下误用本地 Clash 客户端地址
+  const targets = await getProviderRefreshTargets();
+  if (!targets.length) {
     showStatus('请先配置控制面板 API 地址', 'error');
     return;
   }
 
-  const url = buildDashboardUrl(target);
+  const { target, label } = targets[0];
+
+  // 根据 label 判断 UI 偏好来源：路由器/OpenClash 使用 config.clashUI，本地 Clash 使用 localClientConfig.ui
+  const { config, localClientConfig } = await chrome.storage.local.get(['config', 'localClientConfig']);
+  const isRouter = label === 'OpenClash' || label === '路由器';
+  const ui = isRouter
+    ? (config?.clashUI || 'zashboard')
+    : (localClientConfig?.ui || 'zashboard');
+
+  const url = buildDashboardUrl({ ...target, ui });
   if (!url) {
     showStatus('控制面板地址无效', 'error');
     return;
