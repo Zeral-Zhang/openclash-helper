@@ -482,7 +482,11 @@ async function addRule(type) {
       : isOpenClash
         ? '刷新 OpenClash 规则集'
         : (localClientConfig?.host ? '刷新本地 Clash 规则集' : '');
-    showStatus(refreshLabel ? `✓ 已添加，正在${refreshLabel}...` : '✓ 已添加', 'success');
+    showStatus(refreshLabel ? `✓ 已添加，正在${refreshLabel}...` : '✓ 已添加', 'success', true);
+
+    const oppositeType = type === 'PROXY' ? 'DIRECT' : 'PROXY';
+    const lineToRemove = `  - ${matchType},${domainToAdd}`;
+    let oppositeChanged = false;
 
     if (mode === 'remote') {
       if (!config || !config.host) {
@@ -492,8 +496,25 @@ async function addRule(type) {
       }
 
       const api = new OpenClashAPI(config);
+
+      // 添加前删除对立列表中相同域名的规则
+      try {
+        const allRules = await api.getAllRules();
+        let directContent = allRules.direct || '';
+        let proxyContent = allRules.proxy || '';
+        if (oppositeType === 'DIRECT') {
+          const updated = directContent.replace(lineToRemove + '\n', '').replace(lineToRemove, '');
+          if (updated !== directContent) { directContent = updated; oppositeChanged = true; }
+        } else {
+          const updated = proxyContent.replace(lineToRemove + '\n', '').replace(lineToRemove, '');
+          if (updated !== proxyContent) { proxyContent = updated; oppositeChanged = true; }
+        }
+        if (oppositeChanged) await api.saveRules(proxyContent, directContent);
+      } catch (_) { /* 静默忽略 */ }
+
       await api.addRule(domainToAdd, type, matchType);
       await refreshConfiguredRuleProviders(type);
+      if (oppositeChanged) await refreshConfiguredRuleProviders(oppositeType);
     } else {
       if (!cloudflareConfig || !cloudflareConfig.workerUrl) {
         showStatus('请先配置 Cloudflare Worker', 'error');
@@ -504,25 +525,23 @@ async function addRule(type) {
       const api = new CloudflareAPI(cloudflareConfig);
 
       // 添加前删除对立列表中相同域名的规则
-      const oppositeType = type === 'PROXY' ? 'DIRECT' : 'PROXY';
       try {
         const allRules = await api.getAllRules();
-        const lineToRemove = `  - ${matchType},${domainToAdd}`;
-        let changed = false;
         let directContent = allRules.direct || '';
         let proxyContent = allRules.proxy || '';
         if (oppositeType === 'DIRECT') {
           const updated = directContent.replace(lineToRemove + '\n', '').replace(lineToRemove, '');
-          if (updated !== directContent) { directContent = updated; changed = true; }
+          if (updated !== directContent) { directContent = updated; oppositeChanged = true; }
         } else {
           const updated = proxyContent.replace(lineToRemove + '\n', '').replace(lineToRemove, '');
-          if (updated !== proxyContent) { proxyContent = updated; changed = true; }
+          if (updated !== proxyContent) { proxyContent = updated; oppositeChanged = true; }
         }
-        if (changed) await api.saveRules(directContent, proxyContent);
+        if (oppositeChanged) await api.saveRules(directContent, proxyContent);
       } catch (_) { /* 静默忽略 */ }
 
       await api.addRule(domainToAdd, type, matchType);
       await refreshConfiguredRuleProviders(type);
+      if (oppositeChanged) await refreshConfiguredRuleProviders(oppositeType);
     }
     
     // 只断开与刚添加规则匹配的连接，降低对其他请求的影响
@@ -568,10 +587,9 @@ async function refreshRuleProviders(targetConfig, type, mode) {
     }
     
     console.log(`Successfully triggered rule refresh on ${target.host}:${target.port}`);
-    showStatus(`✓ ${target.host} 规则集已刷新`, 'success');
   } catch (e) {
     console.error(`刷新 ${targetConfig.host} 规则集失败:`, e);
-    showStatus(`刷新 ${targetConfig.host} 失败: ${e.message}`, 'error');
+    throw e;
   }
 }
 
@@ -579,28 +597,53 @@ async function refreshRuleProviders(targetConfig, type, mode) {
 function startCountdownRefresh() {
   let countdown = 3;
   const interval = setInterval(() => {
-    showStatus(`✓ 添加成功，${countdown}秒后刷新页面...`, 'success');
+    showStatus(`✓ 添加成功，${countdown}秒后刷新页面...`, 'success', true);
     countdown--;
     if (countdown < 0) {
       clearInterval(interval);
+      const status = document.getElementById('status');
+      status.className = 'status';
       chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
         await chrome.tabs.reload(tabs[0].id);
-        // 等待页面加载后重新检测可达性
-        setTimeout(async () => {
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          await checkAccessibility(tab);
-          if (!isIP) checkClashConnection(currentDomain);
-        }, 1000);
+        // 等待页面真正加载完成后再重新检测可达性
+        const tabId = tabs[0].id;
+        const listener = async (tabIdUpdated, info) => {
+          if (tabIdUpdated === tabId && info.status === 'complete') {
+            chrome.tabs.onUpdated.removeListener(listener);
+            clearTimeout(fallbackTimer);
+            setTimeout(async () => {
+              const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+              await checkAccessibility(tab);
+              if (!isIP) checkClashConnection(currentDomain);
+            }, 500);
+          }
+        };
+        const fallbackTimer = setTimeout(() => {
+          chrome.tabs.onUpdated.removeListener(listener);
+          chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+            if (tabs[0]) {
+              await checkAccessibility(tabs[0]);
+              if (!isIP) checkClashConnection(currentDomain);
+            }
+          });
+        }, 10000);
+        chrome.tabs.onUpdated.addListener(listener);
       });
     }
   }, 1000);
 }
 
-function showStatus(msg, type) {
+function showStatus(msg, type, persistent = false) {
   const status = document.getElementById('status');
   status.textContent = msg;
   status.className = 'status ' + type;
-  setTimeout(() => status.className = 'status', 3000);
+  if (status._hideTimer) {
+    clearTimeout(status._hideTimer);
+    status._hideTimer = null;
+  }
+  if (!persistent) {
+    status._hideTimer = setTimeout(() => status.className = 'status', 3000);
+  }
 }
 
 function parseClashAddress(address) {

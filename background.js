@@ -261,6 +261,9 @@ async function addRuleByMode(domain, type) {
   ]);
 
   const mode = syncMode || 'cloudflare';
+  const oppositeType = type === 'PROXY' ? 'DIRECT' : 'PROXY';
+  const lineToRemove = `  - DOMAIN-SUFFIX,${rootDomain}`;
+  let oppositeChanged = false;
 
   if (mode === 'remote') {
     if (!config?.host) {
@@ -268,16 +271,50 @@ async function addRuleByMode(domain, type) {
     }
 
     const remoteApi = new OpenClashAPI(config);
+
+    // 添加前删除对立列表中相同域名的规则
+    try {
+      const allRules = await remoteApi.getAllRules();
+      let directContent = allRules.direct || '';
+      let proxyContent = allRules.proxy || '';
+      if (oppositeType === 'DIRECT') {
+        const updated = directContent.replace(lineToRemove + '\n', '').replace(lineToRemove, '');
+        if (updated !== directContent) { directContent = updated; oppositeChanged = true; }
+      } else {
+        const updated = proxyContent.replace(lineToRemove + '\n', '').replace(lineToRemove, '');
+        if (updated !== proxyContent) { proxyContent = updated; oppositeChanged = true; }
+      }
+      if (oppositeChanged) await remoteApi.saveRules(proxyContent, directContent);
+    } catch (_) { /* 静默忽略 */ }
+
     await remoteApi.addRule(rootDomain, type, 'DOMAIN-SUFFIX');
     await refreshConfiguredRuleProviders(type);
+    if (oppositeChanged) await refreshConfiguredRuleProviders(oppositeType);
   } else {
     if (!cloudflareConfig?.workerUrl) {
       throw new Error('请先配置 Cloudflare Worker');
     }
 
     const cloudApi = new CloudflareAPI(cloudflareConfig);
+
+    // 添加前删除对立列表中相同域名的规则
+    try {
+      const allRules = await cloudApi.getAllRules();
+      let directContent = allRules.direct || '';
+      let proxyContent = allRules.proxy || '';
+      if (oppositeType === 'DIRECT') {
+        const updated = directContent.replace(lineToRemove + '\n', '').replace(lineToRemove, '');
+        if (updated !== directContent) { directContent = updated; oppositeChanged = true; }
+      } else {
+        const updated = proxyContent.replace(lineToRemove + '\n', '').replace(lineToRemove, '');
+        if (updated !== proxyContent) { proxyContent = updated; oppositeChanged = true; }
+      }
+      if (oppositeChanged) await cloudApi.saveRules(directContent, proxyContent);
+    } catch (_) { /* 静默忽略 */ }
+
     await cloudApi.addRule(rootDomain, type, 'DOMAIN-SUFFIX');
     await refreshConfiguredRuleProviders(type);
+    if (oppositeChanged) await refreshConfiguredRuleProviders(oppositeType);
   }
 
   await closeMatchingClashConnections({

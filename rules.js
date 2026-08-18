@@ -206,8 +206,8 @@ async function saveRules() {
     // 保存到服务器
     await api.saveRules(rules.proxy, rules.direct);
     await Promise.all([
-      refreshRemoteRuleProvider('proxy').catch(error => console.log('刷新代理规则集失败:', error.message)),
-      refreshRemoteRuleProvider('direct').catch(error => console.log('刷新直连规则集失败:', error.message))
+      refreshConfiguredRuleProviders('PROXY').catch(error => console.log('刷新代理规则集失败:', error.message)),
+      refreshConfiguredRuleProviders('DIRECT').catch(error => console.log('刷新直连规则集失败:', error.message))
     ]);
     await notifyBackupChanged('remote_rules_saved');
     showStatus('保存成功', 'success');
@@ -300,26 +300,72 @@ function resolveControllerTarget(targetConfig) {
   };
 }
 
-async function refreshRemoteRuleProvider(type) {
-  const { config, syncTestState } = await chrome.storage.local.get(['config', 'syncTestState']);
-  const target = resolveControllerTarget(
-    syncTestState?.remoteRouter?.target || {
-      host: config?.clashHost || config?.host?.split(':')[0],
-      port: config?.clashPort || '9090',
-      secret: config?.clashSecret || ''
-    }
-  );
+async function getProviderRefreshTargets() {
+  const { config, localClientConfig, syncMode, syncTestState, activeAccessType } = await chrome.storage.local.get([
+    'config',
+    'localClientConfig',
+    'syncMode',
+    'syncTestState',
+    'activeAccessType'
+  ]);
 
+  const mode = syncMode || 'cloudflare';
+  if (mode === 'remote') {
+    const routerTarget = resolveControllerTarget(
+      syncTestState?.remoteRouter?.target || {
+        host: config?.clashHost || config?.host?.split(':')[0],
+        port: config?.clashPort || '9090',
+        secret: config?.clashSecret || ''
+      }
+    );
+
+    return routerTarget ? [{ target: routerTarget, mode: 'remote', label: '路由器' }] : [];
+  }
+
+  const activeType = activeAccessType === 'openClash' || activeAccessType === 'openclash'
+    ? 'openClash'
+    : 'localClash';
+
+  if (activeType === 'openClash') {
+    const routerTarget = resolveControllerTarget(
+      syncTestState?.cloudRouter?.ready
+        ? syncTestState.cloudRouter.target
+        : {
+            host: config?.clashHost || config?.host?.split(':')[0],
+            port: config?.clashPort || '9090',
+            secret: config?.clashSecret || ''
+          }
+    );
+    return routerTarget ? [{ target: routerTarget, mode: 'cloudflare', label: 'OpenClash' }] : [];
+  }
+
+  const externalTarget = resolveControllerTarget(
+    syncTestState?.cloudExternal?.ready ? syncTestState.cloudExternal.target : localClientConfig
+  );
+  return externalTarget ? [{ target: externalTarget, mode: 'localClash', label: '本地 Clash' }] : [];
+}
+
+async function refreshConfiguredRuleProviders(type) {
+  const targets = await getProviderRefreshTargets();
+  await Promise.all(targets.map(({ target, mode, label }) =>
+    refreshRuleProviders(target, type, mode).catch(error => {
+      console.log(`刷新${label}规则集失败:`, error.message);
+    })
+  ));
+}
+
+async function refreshRuleProviders(targetConfig, type, mode) {
+  const target = resolveControllerTarget(targetConfig);
   if (!target) {
     return;
   }
-
-  const providerName = type === 'proxy' ? 'OpenClashHelper_Proxy' : 'OpenClashHelper_Direct';
 
   const headers = { 'Content-Type': 'application/json' };
   if (target.secret) {
     headers.Authorization = `Bearer ${target.secret}`;
   }
+
+  const providerName = type === 'PROXY' ? 'OpenClashHelper_Proxy' : 'OpenClashHelper_Direct';
 
   const response = await fetch(`http://${target.host}:${target.port}/providers/rules/${providerName}`, {
     method: 'PUT',
