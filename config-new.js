@@ -1565,7 +1565,7 @@ document.getElementById('autoConfigCf').onclick = async () => {
     await chrome.storage.local.set({ cloudflareConfig, syncMode: 'cloudflare', ruleSource: 'worker', enabledDevices: { openclash: true, clashController: Boolean(document.getElementById('clashHostCf')?.value) } });
       await updateOverviewStatus().catch(() => {});
   } catch (e) {
-    showStatus('statusAutoConfigCf', '配置失败: ' + e.message, 'error');
+    showStatus('statusAutoConfigCf', '配置失败: ' + formatRouterError(e), 'error');
   }
 };
 
@@ -1650,7 +1650,7 @@ document.getElementById('testRemote').onclick = async () => {
     });
   } catch (e) {
     await updateSyncTestState({ remoteRouter: { ready: false, testedAt: new Date().toISOString() } });
-    showStatus('statusRemote', '连接失败: ' + e.message, 'error');
+    showStatus('statusRemote', '连接失败: ' + formatRouterError(e), 'error');
   }
 };
 
@@ -1915,7 +1915,7 @@ document.getElementById('autoConfigRemote').onclick = async () => {
     
     showStatus('statusAutoConfig', '✅ OpenClash 配置完成并已重启！', 'success');
   } catch (e) {
-    showStatus('statusAutoConfig', '配置失败: ' + e.message, 'error');
+    showStatus('statusAutoConfig', '配置失败: ' + formatRouterError(e), 'error');
   }
 };
 
@@ -2139,6 +2139,17 @@ function showStatus(elementId, msg, type) {
   if (type === 'success' && !msg.includes('⏳') && !msg.includes('正在')) {
     setTimeout(() => status.className = 'status', 5000);
   }
+}
+
+// 把 api.js 抛出的错误转成更友好的提示
+function formatRouterError(e) {
+  if (e && e.code === 'LUCI_RPC_MISSING') {
+    return '路由器缺少 luci-mod-rpc 包，请先在路由器上安装 luci-mod-rpc';
+  }
+  if (e && e.code === 'NETWORK_ERROR') {
+    return `无法连接路由器：${e.message}`;
+  }
+  return (e && e.message) ? e.message : String(e);
 }
 
 function initSidebarNavigation() {

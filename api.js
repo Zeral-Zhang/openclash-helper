@@ -14,10 +14,24 @@ class OpenClashAPI {
         method: 'login',
         params: [this.config.username, this.config.password]
       })
+    }).catch(err => {
+      // 网络层错误（连接拒绝、超时、DNS 失败等）
+      const e = new Error(`无法连接路由器: ${err.message || err}`);
+      e.code = 'NETWORK_ERROR';
+      throw e;
     });
 
     if (!response.ok) {
-      throw new Error(`登录失败: HTTP ${response.status}`);
+      // 404 = 路由器上没有 luci-mod-rpc，整条 RPC 链路断裂
+      if (response.status === 404) {
+        const e = new Error('路由器缺少 luci-mod-rpc 包，请先在路由器上安装 luci-mod-rpc');
+        e.code = 'LUCI_RPC_MISSING';
+        throw e;
+      }
+      const e = new Error(`登录失败: HTTP ${response.status}`);
+      e.code = 'HTTP_ERROR';
+      e.status = response.status;
+      throw e;
     }
 
     const data = await response.json();
